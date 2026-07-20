@@ -10,6 +10,13 @@ from redactor.detect import (
     PresidioDetector,
     finance_detector,
 )
+from redactor.scrub import (
+    PLACEHOLDER,
+    ScrubHit,
+    ScrubResult,
+    scrub,
+    scrub_text,
+)
 from redactor.store import (
     SCHEMA_VERSION,
     BadKeyError,
@@ -29,12 +36,17 @@ __all__ = [
     "Detector",
     "MappingTable",
     "MigrationError",
+    "PLACEHOLDER",
     "PresidioDetector",
     "Sealed",
     "SCHEMA_VERSION",
+    "ScrubHit",
+    "ScrubResult",
     "Store",
     "StoreError",
     "finance_detector",
     "open_store",
+    "scrub",
+    "scrub_text",
     "__version__",
 ]
