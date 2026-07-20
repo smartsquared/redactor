@@ -40,6 +40,27 @@ decryptable table is present. The passphrase comes from `--key` or the
 `REDACTOR_KEY` environment variable. Real values are written to stdout (the
 local render surface) only — never to any artifact that leaves the machine.
 
+## The sanitized-context API
+
+The contract the first consumer (`sakuma-finance`) speaks to hold a conversation
+through the gateway without ever touching real data. A consumer stays **entirely
+in alias-space**: it requests redacted bookkeeping context (transactions,
+balances, date ranges — identifying fields as tokens, amounts and dates real) and
+sends conversation turns through the outbound proxy, which forward-redacts real
+mentions before anything leaves the machine.
+
+The API **never un-redacts** — rendering tokens back to real values is the
+separate local lens (above), at the render boundary only. That is what keeps a
+consumer's transcript and artifacts redacted.
+
+Stable and versioned; full contract in
+[docs/sanitized-context-api.md](docs/sanitized-context-api.md). An end-to-end
+round trip over the fixtures:
+
+```console
+$ python -m examples.sanitized_context_roundtrip
+```
+
 ## Deployment
 
 Not yet deployed. Local-first by design — the gateway and its mapping table run on the user's machine.
