@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "redactor"
+version = "0.0.1"
+description = "A privacy gateway: bidirectional alias proxy for safe conversations about sensitive data."
+readme = "README.md"
+requires-python = ">=3.11"
+# SQLCipher-backed local store (see docs/adr/0001-encryption-at-rest.md).
+# sqlcipher3 ships a manylinux wheel with libsqlcipher bundled — no system lib needed.
+dependencies = [
+    "sqlcipher3>=0.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+]
+
+[tool.setuptools]
+packages = ["redactor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
