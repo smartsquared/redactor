@@ -114,7 +114,8 @@ def checking_txns(month: str, mi: int) -> list[dict]:
         (18, "DEBIT", "-134.92", "Seattle City Light", v("Seattle City Light")),
         (21, "DEBIT", "-96.15", "Comcast Xfinity", v("Comcast Xfinity")),
         (25, "DEBIT", "-450.00", "Card Payment", v("Card Payment")),
-        (28, "DEBIT", "-33.61", "Whole Foods Market", PAYEE_VARIANTS["Whole Foods Market"][(mi + 1) % 3]),
+        (28, "DEBIT", "-33.61", "Whole Foods Market",
+         PAYEE_VARIANTS["Whole Foods Market"][(mi + 1) % 3]),
     ]
     return [
         {"day": day(month, d), "ttype": t, "amount": a, "canonical": c, "memo": m}
