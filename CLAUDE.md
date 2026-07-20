@@ -1,14 +1,14 @@
-# <repo-name> — project conventions for Claude Code
+# redactor — project conventions for Claude Code
 
 ## What this project is
 
-<one-paragraph description matching README.md>
+A privacy gateway: a bidirectional alias proxy that makes conversations about sensitive data safe with any chatbot. It ingests real data into a local encrypted store, redacts identifying strings to stable pseudonyms before model contact, and reverses the aliases at the local render boundary. First consumer: `smartsquared/sakuma-finance`. Full design: [docs/brief.md](docs/brief.md).
 
 This repo is a **product of the sakuma process**, not an ecosystem component. The sakuma pipeline built it; its job now is to serve its users. Process and methodology concerns do not live here — see "What this repo does NOT do" below.
 
 ## Your first task in this repo
 
-<what's the bootstrap work? Link to the brief and the first issue.>
+Read [docs/brief.md](docs/brief.md) first — the four-artifact privacy model and the un-redaction mechanism are ratified design, not suggestions. Bootstrap work (wave plan, first issues) has not been filed yet; when it is, this section will link it.
 
 Per gitflow, do the work on a feature branch off `develop` and open a PR back to `develop` when done.
 
@@ -30,9 +30,10 @@ Ready means `merge: MERGEABLE`, `state: CLEAN`, and `ci: SUCCESS`. A `CONFLICTIN
 
 ## Project conventions
 
-- **<convention 1>** — <why>
-- **<convention 2>** — <why>
-- **<convention 3>** — <why>
+- **No real data, ever** — this repo holds code and synthetic fixtures only. Real financial/medical/legal data and the alias mapping table live outside all repos, on the user's machine. A fixture that looks real should be provably fake (test bank names, invalid account formats).
+- **The mapping table is the crown jewel** — any code path that could serialize, log, or transmit the alias↔real mapping off-machine is a security bug, not a style issue. Treat it like a private key.
+- **Un-redaction only at the local render boundary** — agent-written artifacts (PR bodies, reports, notifications) stay in alias-space. Never write a substitution step into anything that runs off the user's machine.
+- **Wrap Presidio, don't build NER** — detection is bought; alias continuity and entity resolution are built. Keep that boundary clean.
 
 ## When to log (the logging protocol)
 
@@ -42,22 +43,21 @@ This repo follows the ecosystem logging protocol at `~/Code/ledger/docs/logging-
 
 - **Methodology and process learnings** — if building this product teaches something about how the pipeline should work, that signal goes to [smartsquared/sakuma](https://github.com/smartsquared/sakuma), not here.
 - **Pipeline tooling fixes** — agent-lab, blueprint, compass bugs get filed on those repos, not patched around in this one.
-- <product-specific out-of-scope item — what other repo or service owns this>
+- **Finance-domain conversation logic** — the accountability-partner behavior (monthly closes, commitments, drift detection) belongs to [smartsquared/sakuma-finance](https://github.com/smartsquared/sakuma-finance). This repo is the pipe, not the conversation.
+- **Storing redacted records** — those live in [smartsquared/finance-records](https://github.com/smartsquared/finance-records) (private).
 
 If you find yourself doing any of these here, you've crossed the product/process boundary.
 
 ## Andon awareness
 
-<does this repo honor andon? Products under active pipeline construction should: poll STATUS.md and halt when `pulled`. A shipped product in maintenance may not need to.>
-
-See the protocol in [smartsquared/andon](https://github.com/smartsquared/andon).
+Under active pipeline construction: poll STATUS.md in [smartsquared/andon](https://github.com/smartsquared/andon) and halt when `pulled`.
 
 ## Useful state to know
 
-- Repo created <YYYY-MM-DD> from template smartsquared/seedling-product.
-- Brief / design doc: <link>
-- Deployment target: <host/domain, or "not yet deployed">
-- <other relevant context: driving sakuma loop, sibling repos (e.g. an asset pipeline), prior artifacts this product replaces>
+- Repo created 2026-07-20 from template smartsquared/seedling-product.
+- Brief / design doc: [docs/brief.md](docs/brief.md); original capture in sakuma `whiteboard/privacy-gateway-and-finance-partner-proposal.md`.
+- Deployment target: not yet deployed; local-first by design.
+- Sibling repos: [sakuma-finance](https://github.com/smartsquared/sakuma-finance) (first consumer), [finance-records](https://github.com/smartsquared/finance-records) (redacted-record store).
 
 ## Branch Strategy
 
@@ -65,15 +65,4 @@ This project follows the agent-lab GitFlow conventions. See [gitflow.md](gitflow
 
 ## Escalation
 
-When in doubt, stop and ask. Trigger conditions: <product-specific ambiguity that warrants pausing — e.g. anything user-visible that the brief doesn't ratify>.
-
-<!--
-This repo was scaffolded from smartsquared/seedling-product.
-
-If you're filling this template out for a new product:
-
-1. Replace all `<placeholders>` above.
-2. Customize project conventions to match what this product actually is.
-3. Set the andon-awareness section based on whether the pipeline is actively building here.
-4. Delete this comment block.
--->
+When in doubt, stop and ask. Trigger conditions: anything that widens what leaves the local machine (new egress, new serialization of the mapping table, loosening the fixture-only rule), and any change to the four-artifact privacy model in the brief.
