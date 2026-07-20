@@ -10,6 +10,12 @@ from redactor.detect import (
     PresidioDetector,
     finance_detector,
 )
+from redactor.outbound import (
+    LeakWarning,
+    OutboundRedactor,
+    OutboundResult,
+    Substitution,
+)
 from redactor.scrub import (
     PLACEHOLDER,
     ScrubHit,
@@ -34,11 +40,15 @@ __all__ = [
     "BadKeyError",
     "DetectedEntity",
     "Detector",
+    "LeakWarning",
     "MappingTable",
     "MigrationError",
+    "OutboundRedactor",
+    "OutboundResult",
     "PLACEHOLDER",
     "PresidioDetector",
     "Sealed",
+    "Substitution",
     "SCHEMA_VERSION",
     "ScrubHit",
     "ScrubResult",
