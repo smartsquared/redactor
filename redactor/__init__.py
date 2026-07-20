@@ -10,6 +10,12 @@ from redactor.detect import (
     PresidioDetector,
     finance_detector,
 )
+from redactor.lens import (
+    LensResult,
+    Resolver,
+    lens,
+    resolver_from_table,
+)
 from redactor.scrub import (
     PLACEHOLDER,
     ScrubHit,
@@ -34,10 +40,12 @@ __all__ = [
     "BadKeyError",
     "DetectedEntity",
     "Detector",
+    "LensResult",
     "MappingTable",
     "MigrationError",
     "PLACEHOLDER",
     "PresidioDetector",
+    "Resolver",
     "Sealed",
     "SCHEMA_VERSION",
     "ScrubHit",
@@ -45,7 +53,9 @@ __all__ = [
     "Store",
     "StoreError",
     "finance_detector",
+    "lens",
     "open_store",
+    "resolver_from_table",
     "scrub",
     "scrub_text",
     "__version__",
