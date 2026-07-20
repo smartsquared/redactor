@@ -1,0 +1,108 @@
+{
+  "note": "Synthetic bookkeeping fixtures. Provably fake. See generate_fixtures.py.",
+  "months": [
+    "2026-04",
+    "2026-05",
+    "2026-06"
+  ],
+  "accounts": {
+    "checking": {
+      "institution": "Bank of Nowhere",
+      "account_id": "NOWHERE-CHK-000199",
+      "routing_number": "123456789",
+      "routing_note": "fails ABA checksum on purpose",
+      "display_mask": "••••0199"
+    },
+    "credit": {
+      "institution": "Placeholder National Bank",
+      "account_id": "PLACEHOLDER-CC-000042",
+      "display_mask": "••••0042"
+    }
+  },
+  "multi_variant_payee_count": 12,
+  "payees": {
+    "Whole Foods Market": [
+      "WF MKT 445 SEATTLE WA",
+      "WHOLE FOODS MKT #10029",
+      "WHOLEFDS #1029 SEA"
+    ],
+    "Starbucks": [
+      "SBUX 8842 SEATTLE WA",
+      "STARBUCKS #5561",
+      "STARBUCKS STORE 05561 SEA"
+    ],
+    "Amazon": [
+      "AMAZON.COM*MK12QP",
+      "AMZN Mktp US*RT4X9",
+      "Amazon.com AMZN.COM/BILL WA"
+    ],
+    "Shell": [
+      "SHELL 12345678 KENT WA",
+      "SHELL OIL 5712341",
+      "SHELL SERVICE STATION #041"
+    ],
+    "Netflix": [
+      "NETFLIX 8663 LOS GATOS",
+      "NETFLIX.COM",
+      "Netflix.com CA"
+    ],
+    "Comcast Xfinity": [
+      "COMCAST CABLE COMM",
+      "COMCAST*CABLE 8493",
+      "XFINITY 800 COMCAST"
+    ],
+    "Trader Joe's": [
+      "TJ'S #0130 SEATTLE",
+      "TRADER JOE'S #130",
+      "TRADER JOES 130 QPS"
+    ],
+    "Target": [
+      "TARGET 00011234 SEA",
+      "TARGET T-1123",
+      "TARGET.COM *ORDER"
+    ],
+    "Costco": [
+      "COSTCO GAS #0044 KENT",
+      "COSTCO WHOLESALE 44",
+      "COSTCO WHSE #0044"
+    ],
+    "Chipotle": [
+      "CHIPOTLE 2245",
+      "CHIPOTLE MEXICAN GRILL 2245",
+      "CHIPOTLE ONLINE"
+    ],
+    "Uber": [
+      "UBER *TRIP HELP.UBER",
+      "UBER EATS 8005",
+      "UBER*EATS SAN FRANCISCO"
+    ],
+    "Seattle City Light": [
+      "CITY LIGHT ONLINE PMT",
+      "SCL UTILITY BILL",
+      "SEATTLE CITY LIGHT"
+    ],
+    "Fictional Corp Payroll": [
+      "FICTIONAL CORP PAYROLL PPD"
+    ],
+    "Testburg Property Mgmt": [
+      "TESTBURG PROPERTY MGMT RENT"
+    ],
+    "Card Payment": [
+      "AUTOPAY PAYMENT - THANK YOU"
+    ]
+  },
+  "files": [
+    "checking_2026-04.csv",
+    "checking_2026-04.ofx",
+    "checking_2026-05.csv",
+    "checking_2026-05.ofx",
+    "checking_2026-06.csv",
+    "checking_2026-06.ofx",
+    "credit_2026-04.csv",
+    "credit_2026-04.ofx",
+    "credit_2026-05.csv",
+    "credit_2026-05.ofx",
+    "credit_2026-06.csv",
+    "credit_2026-06.ofx"
+  ]
+}
