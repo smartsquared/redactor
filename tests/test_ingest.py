@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from redactor.fixtures import load_manifest, load_statements
 from redactor.ingest import ingest_statements
 from redactor.leaklint import scan_projection, seeds_from_manifest
