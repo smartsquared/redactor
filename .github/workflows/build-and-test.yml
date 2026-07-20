@@ -27,3 +27,6 @@ jobs:
 
       - name: Test (pytest)
         run: pytest
+
+      - name: m01 gate (leak-check falsifier harness)
+        run: python -m redactor.falsifier
