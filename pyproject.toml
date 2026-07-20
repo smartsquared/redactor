@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "redactor"
+version = "0.0.0"
+description = "A bidirectional alias proxy (privacy gateway) — reversible, local-first redaction."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "UNLICENSED" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+redactor-fakeness = "redactor.fakeness:main"
+
+[tool.setuptools]
+packages = ["redactor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["tests/fixtures/bookkeeping/*.ofx", "tests/fixtures/bookkeeping/*.csv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
