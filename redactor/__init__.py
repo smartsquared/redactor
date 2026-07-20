@@ -4,6 +4,13 @@ See docs/brief.md for the design. This package currently exposes the local
 encrypted store and alias mapping table schema (story S0.3).
 """
 
+from redactor.scrub import (
+    PLACEHOLDER,
+    ScrubHit,
+    ScrubResult,
+    scrub,
+    scrub_text,
+)
 from redactor.store import (
     SCHEMA_VERSION,
     BadKeyError,
@@ -21,10 +28,15 @@ __all__ = [
     "BadKeyError",
     "MappingTable",
     "MigrationError",
+    "PLACEHOLDER",
     "Sealed",
     "SCHEMA_VERSION",
+    "ScrubHit",
+    "ScrubResult",
     "Store",
     "StoreError",
     "open_store",
+    "scrub",
+    "scrub_text",
     "__version__",
 ]
