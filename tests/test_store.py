@@ -9,9 +9,8 @@ import sqlite3
 import pytest
 
 from redactor.store import (
-    BadKeyError,
     SCHEMA_VERSION,
-    Store,
+    BadKeyError,
     StoreError,
     open_store,
 )

@@ -15,7 +15,6 @@ This is enforced on three layers, all asserted here:
      encrypted SQLCipher connection.
 """
 import copy
-import io
 import json
 import pathlib
 import pickle
@@ -42,7 +41,7 @@ def test_sealed_repr_and_str_do_not_leak_value():
     assert REAL not in repr(s)
     assert REAL not in str(s)
     assert REAL not in f"{s}"
-    assert REAL not in "{}".format(s)
+    assert REAL not in f"{s}"
 
 
 def test_sealed_is_not_json_serializable():

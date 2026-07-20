@@ -21,9 +21,9 @@ happen only on the machine that holds the table.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator, Optional, Union
 
 try:  # pragma: no cover - exercised only when the dependency is absent
     import sqlcipher3 as _sqlcipher
@@ -38,7 +38,7 @@ except ImportError as exc:  # pragma: no cover
 # user_version i -> i+1).
 SCHEMA_VERSION = 1
 
-PathLike = Union[str, os.PathLike]
+PathLike = str | os.PathLike
 
 
 class StoreError(Exception):
@@ -54,7 +54,7 @@ class MigrationError(StoreError):
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _escape_key(key: str) -> str:
@@ -126,7 +126,7 @@ class MappingTable:
         )
         self._conn.commit()
 
-    def resolve_alias(self, alias_token: str) -> Optional[Sealed]:
+    def resolve_alias(self, alias_token: str) -> Sealed | None:
         """Return the real value for an alias token, sealed, or ``None``."""
         row = self._conn.execute(
             "SELECT real_value FROM alias_mapping WHERE alias_token = ?",
@@ -134,7 +134,7 @@ class MappingTable:
         ).fetchone()
         return None if row is None else Sealed(row[0])
 
-    def resolve_token(self, entity_type: str, real_value: str) -> Optional[str]:
+    def resolve_token(self, entity_type: str, real_value: str) -> str | None:
         """Return the alias token for a real value, or ``None``. The alias token
         itself is non-sensitive, so it is returned bare."""
         row = self._conn.execute(
@@ -184,10 +184,10 @@ class Store:
         account_id: str,
         posted_date: str,
         amount_cents: int,
-        raw_payee: Optional[str] = None,
-        raw_memo: Optional[str] = None,
+        raw_payee: str | None = None,
+        raw_memo: str | None = None,
         currency: str = "USD",
-        source_file: Optional[str] = None,
+        source_file: str | None = None,
     ) -> int:
         cur = self._conn.execute(
             "INSERT INTO raw_transactions "
@@ -206,7 +206,7 @@ class Store:
         )
         cols = [c[0] for c in cur.description]
         for row in cur.fetchall():
-            yield dict(zip(cols, row))
+            yield dict(zip(cols, row, strict=True))
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -227,7 +227,7 @@ class Store:
     def close(self) -> None:
         self._conn.close()
 
-    def __enter__(self) -> "Store":
+    def __enter__(self) -> Store:
         return self
 
     def __exit__(self, *_exc) -> None:

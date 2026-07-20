@@ -5,11 +5,16 @@ __pycache__/
 .eggs/
 build/
 dist/
-.pytest_cache/
 
 # Virtual environments
 .venv/
 venv/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Local encrypted store — never commit real or test store files
 *.db
