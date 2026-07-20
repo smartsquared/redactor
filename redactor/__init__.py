@@ -1,9 +1,7 @@
-"""redactor — a bidirectional alias proxy (privacy gateway).
+"""redactor — a privacy gateway (bidirectional alias proxy).
 
-Milestone m01, story S0.2 lands the shared alias-space contract and the
-synthetic bookkeeping fixtures. See ``docs/alias-contract.md``.
+See docs/brief.md for the ratified four-artifact privacy model. This is the
+package skeleton; functional modules land in later wave stories.
 """
-
-__all__ = ["__version__"]
 
 __version__ = "0.0.0"

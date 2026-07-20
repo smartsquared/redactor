@@ -5,7 +5,11 @@ __pycache__/
 .eggs/
 build/
 dist/
-.pytest_cache/
-.ruff_cache/
 .venv/
 venv/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
