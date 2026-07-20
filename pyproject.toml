@@ -12,14 +12,19 @@ license = { text = "UNLICENSED" }
 authors = [{ name = "smartsquared" }]
 # SQLCipher-backed local store (see docs/adr/0001-encryption-at-rest.md).
 # sqlcipher3 ships a manylinux wheel with libsqlcipher bundled — no system lib needed.
+# presidio-analyzer provides the detection recognizer framework we wrap (story
+# S1.1). We use only its pattern/deny-list recognizers, invoked directly — no
+# spaCy NlpEngine, so no language-model download is needed in CI.
 dependencies = [
     "sqlcipher3>=0.5",
+    "presidio-analyzer>=2.2",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
   "ruff>=0.5",
+  "hypothesis>=6",
 ]
 
 [project.scripts]
