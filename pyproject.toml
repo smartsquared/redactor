@@ -28,6 +28,7 @@ dev = [
 ]
 
 [project.scripts]
+redactor = "redactor.cli:main"
 redactor-fakeness = "redactor.fakeness:main"
 
 [tool.setuptools.packages.find]
