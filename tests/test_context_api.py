@@ -18,7 +18,11 @@ un-redaction is never part of this contract — it is the separate local lens.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 from redactor.alias import find_aliases
 from redactor.context_api import (
@@ -184,16 +188,66 @@ def test_round_trip_renders_only_at_local_lens(tmp_path):
         _assert_no_real_identifier(ctx.to_json())
 
         # 2. user turn -> outbound redaction -> safe to send to the model
-        sent = client.send("How much at Whole Foods in May?")
+        sent = client.send("Did I hit Whole Foods in May?")
         _assert_no_real_identifier(sent.text)
-        payee_token = next(s.token for s in sent.substitutions)
+        assert any(s.token.startswith("PAYEE-") for s in sent.substitutions)
 
-        # 3. the model answers in alias-space (stub); it never saw a real name
-        model_reply = f"In May you spent $84.10 at {payee_token}."
+        # 3. the model answers in alias-space over context tokens; it never saw a
+        #    real name — only ACCT-/INST- tokens from the redacted context.
+        bal = ctx.balances[0]
+        model_reply = (
+            f"Your {bal.institution} checking ({bal.account}) netted {bal.net:+.2f}."
+        )
         received = client.receive(model_reply)
+        assert received.text == model_reply  # not un-redacted here — still alias-space
         _assert_no_real_identifier(received.text)
 
         # 4. render to the human — ONLY here, at the local lens (S2.2)
         rendered = lens(received.text, resolver_from_table(store.mapping)).text
-        assert payee_token not in rendered  # the token was resolved back
-        assert find_aliases(rendered) == []  # nothing left in alias-space
+        assert find_aliases(rendered) == []          # nothing left in alias-space
+        assert "Bank of Nowhere" in rendered         # a real value, produced locally
+        assert bal.institution not in rendered       # the token was resolved back
+
+
+# --- the shipped round-trip demo script ------------------------------------- #
+
+_DEMO = Path(__file__).resolve().parent.parent / "examples" / "sanitized_context_roundtrip.py"
+
+
+def _load_demo():
+    spec = importlib.util.spec_from_file_location("_s23_demo", _DEMO)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_demo_run_keeps_boundary_alias_space(tmp_path):
+    """The demo's round trip: everything crossing the model boundary is
+    alias-space; a real value appears only in the locally-rendered reply."""
+    demo = _load_demo()
+    with open_store(tmp_path / "s.db", demo.DEMO_KEY) as store:
+        out = demo.run(store)
+
+    # Context + the two turns that cross the model boundary are alias-space.
+    _assert_no_real_identifier(out["context"].to_json())
+    _assert_no_real_identifier(out["sent"].text)
+    _assert_no_real_identifier(out["received"].text)
+    assert find_aliases(out["received"].text)  # the reply is stated in tokens
+
+    # The lens render is the only place a real value surfaces.
+    assert "Bank of Nowhere" in out["rendered"]
+    assert find_aliases(out["rendered"]) == []
+
+
+def test_demo_main_runs_clean():
+    """`python -m examples.sanitized_context_roundtrip` exits 0 and renders a
+    real value only after the lens step."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "examples.sanitized_context_roundtrip"],
+        cwd=_DEMO.parent.parent,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Bank of Nowhere" in proc.stdout  # rendered locally at the lens
+    assert "round trip" in proc.stdout.lower()
