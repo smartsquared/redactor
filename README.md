@@ -20,6 +20,26 @@ This repo is a **product of the sakuma process** — it was built by the sakuma 
 
 Nothing shipped yet. v0 target is contract-shaped, not feature-shaped: the first consumer (`sakuma-finance`) can hold a useful conversation through the gateway with no identifiers leaking, verified against fixtures. See [docs/brief.md](docs/brief.md).
 
+## The local lens (`redactor lens`)
+
+The inbound half of the proxy. A model answers in alias-space (`PAYEE-7`,
+`ACCT-1`); the lens substitutes those tokens back to their real values so you
+can read the answer in plain language. It is **mangle-tolerant** — it recovers
+the token from the manglings models emit (`payee-7`, `PAYEE 7`, `PAYEE-7's`) —
+but **never false-positive**: non-alias prose and tokens not in your table pass
+through untouched.
+
+```console
+$ echo "Your payee-7's charge hit ACCT-1." | redactor lens --store ~/.redactor/store.db
+Your Bank of Nowhere Grocery charge hit NOWHERE-CHK-000199.
+```
+
+Un-redaction happens **only where the mapping table lives**: the lens opens the
+local encrypted store and refuses (non-zero exit, nothing rendered) if no
+decryptable table is present. The passphrase comes from `--key` or the
+`REDACTOR_KEY` environment variable. Real values are written to stdout (the
+local render surface) only — never to any artifact that leaves the machine.
+
 ## Deployment
 
 Not yet deployed. Local-first by design — the gateway and its mapping table run on the user's machine.
