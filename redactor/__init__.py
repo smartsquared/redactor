@@ -1,7 +1,30 @@
 """redactor — a privacy gateway (bidirectional alias proxy).
 
-See docs/brief.md for the ratified four-artifact privacy model. This is the
-package skeleton; functional modules land in later wave stories.
+See docs/brief.md for the design. This package currently exposes the local
+encrypted store and alias mapping table schema (story S0.3).
 """
 
-__version__ = "0.0.0"
+from redactor.store import (
+    SCHEMA_VERSION,
+    BadKeyError,
+    MappingTable,
+    MigrationError,
+    Sealed,
+    Store,
+    StoreError,
+    open_store,
+)
+
+__version__ = "0.0.1"
+
+__all__ = [
+    "BadKeyError",
+    "MappingTable",
+    "MigrationError",
+    "Sealed",
+    "SCHEMA_VERSION",
+    "Store",
+    "StoreError",
+    "open_store",
+    "__version__",
+]

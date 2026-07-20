@@ -4,4 +4,4 @@ import redactor
 
 
 def test_package_imports():
-    assert redactor.__version__ == "0.0.0"
+    assert redactor.__version__

@@ -5,6 +5,8 @@ __pycache__/
 .eggs/
 build/
 dist/
+
+# Virtual environments
 .venv/
 venv/
 
@@ -13,3 +15,8 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Local encrypted store — never commit real or test store files
+*.db
+*.db-shm
+*.db-wal
