@@ -16,6 +16,12 @@ from redactor.lens import (
     lens,
     resolver_from_table,
 )
+from redactor.outbound import (
+    LeakWarning,
+    OutboundRedactor,
+    OutboundResult,
+    Substitution,
+)
 from redactor.scrub import (
     PLACEHOLDER,
     ScrubHit,
@@ -40,13 +46,17 @@ __all__ = [
     "BadKeyError",
     "DetectedEntity",
     "Detector",
+    "LeakWarning",
     "LensResult",
     "MappingTable",
     "MigrationError",
+    "OutboundRedactor",
+    "OutboundResult",
     "PLACEHOLDER",
     "PresidioDetector",
     "Resolver",
     "Sealed",
+    "Substitution",
     "SCHEMA_VERSION",
     "ScrubHit",
     "ScrubResult",

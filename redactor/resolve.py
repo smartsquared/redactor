@@ -140,6 +140,29 @@ class PayeeResolver:
     def entity_count(self) -> int:
         return len(self._entities)
 
+    def match(self, memo: str) -> int | None:
+        """Return the id of the entity *memo* resolves to, or ``None``.
+
+        The non-mutating twin of :meth:`resolve`: it never creates an entity and
+        never absorbs evidence. That is exactly what the outbound proxy (S2.1)
+        needs — a user mention that matches nothing known must be *surfaced as
+        unresolved*, never allowed to silently spawn a phantom payee that would
+        then look "known". Returns the highest-confidence entity at or above the
+        threshold, else ``None``.
+        """
+        tokens = normalize(memo)
+        if not tokens:
+            tokens = [re.sub(r"[^A-Z]", "", memo.upper()) or "UNKNOWN"]
+
+        best_id: int | None = None
+        best_score = 0.0
+        for ent in self._entities:
+            score = self._confidence(tokens, ent)
+            if score >= self._threshold and score > best_score:
+                best_score = score
+                best_id = ent.id
+        return best_id
+
     def resolve(self, memo: str) -> int:
         """Resolve *memo* to a payee entity id, creating one if none matches."""
         tokens = normalize(memo)
