@@ -25,6 +25,8 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
+from redactor.alias import canonical
+
 try:  # pragma: no cover - exercised only when the dependency is absent
     import sqlcipher3 as _sqlcipher
 except ImportError as exc:  # pragma: no cover
@@ -36,7 +38,7 @@ except ImportError as exc:  # pragma: no cover
 
 # Bump when a migration is added; keep _MIGRATIONS in step (index i migrates
 # user_version i -> i+1).
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 PathLike = str | os.PathLike
 
@@ -114,6 +116,59 @@ class MappingTable:
 
     def __init__(self, conn) -> None:
         self._conn = conn
+
+    def assign(self, entity_type: str, real_value: str) -> str:
+        """Return a stable alias token for ``(entity_type, real_value)`` (S1.2).
+
+        Idempotent issuance, per alias-contract §2:
+
+          * **Stable forever** — an already-bound entity returns its existing
+            token; the call never mints a second alias for the same entity.
+          * **Monotonic, gap-tolerant, never reused** — a new entity gets the
+            next unused integer for its class, drawn from a durable per-class
+            counter that only ever increases. Numbers are not recycled even if a
+            row is later deleted, so a stale redacted record can never be
+            silently re-bound to a different real entity (§2.3).
+          * **Namespaced by class** — ``ACCT`` and ``PAYEE`` count independently.
+
+        This is *issuance*, not resolution: the caller supplies the resolved
+        entity key. Collapsing memo-string variants to one entity is S1.3.
+
+        Raises ``ValueError`` if ``entity_type`` is outside the closed class set.
+        """
+        # The uppercase class is the identity we key both the mapping and the
+        # counter on, so "PAYEE" and "payee" name the same entity space.
+        cls = entity_type.upper()
+
+        existing = self.resolve_token(cls, real_value)
+        if existing is not None:
+            return existing
+
+        n = self._next_n(cls)
+        # canonical() validates the class against the closed set and fixes the
+        # token grammar in one place; it raises before any row is written.
+        token = canonical(cls, n)
+        # Insert the binding and advance the counter in one transaction. The
+        # UNIQUE(alias_token) constraint is a backstop against ever colliding.
+        self._conn.execute(
+            "INSERT INTO alias_mapping (alias_token, entity_type, real_value, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (token, cls, real_value, _utcnow_iso()),
+        )
+        self._conn.execute(
+            "INSERT INTO alias_sequence (entity_type, next_n) VALUES (?, ?) "
+            "ON CONFLICT(entity_type) DO UPDATE SET next_n = excluded.next_n",
+            (cls, n + 1),
+        )
+        self._conn.commit()
+        return token
+
+    def _next_n(self, cls: str) -> int:
+        """The next unused integer for a class, from the durable counter."""
+        row = self._conn.execute(
+            "SELECT next_n FROM alias_sequence WHERE entity_type = ?", (cls,)
+        ).fetchone()
+        return 1 if row is None else row[0]
 
     def put(self, alias_token: str, entity_type: str, real_value: str) -> None:
         """Insert (or replace) a mapping row: alias_token ↔ real_value."""
@@ -265,7 +320,22 @@ def _migrate_0_to_1(conn) -> None:
     )
 
 
-_MIGRATIONS = [_migrate_0_to_1]
+def _migrate_1_to_2(conn) -> None:
+    # The durable per-class issuance counter for stable aliasing (S1.2). One row
+    # per entity class; next_n only ever increases, so alias numbers are never
+    # reused even across deletions (alias-contract §2.3). Kept separate from
+    # alias_mapping so the counter survives independently of the current rows.
+    conn.executescript(
+        """
+        CREATE TABLE alias_sequence (
+            entity_type TEXT PRIMARY KEY,
+            next_n      INTEGER NOT NULL
+        );
+        """
+    )
+
+
+_MIGRATIONS = [_migrate_0_to_1, _migrate_1_to_2]
 
 
 # -- open ---------------------------------------------------------------------
