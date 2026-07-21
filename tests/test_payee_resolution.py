@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 import pytest
 
 from redactor.fixtures import load_manifest, load_statements
-from redactor.resolve import PayeeResolver, normalize
+from redactor.resolve import PayeeResolver, display_label, normalize
 
 
 # --------------------------------------------------------------------------- #
@@ -171,3 +171,64 @@ def test_normalize_strips_store_numbers_cities(memo, expected):
 def test_normalize_strips_dates():
     # Numeric date fragments carry no payee signal and must be dropped.
     assert normalize("COSTCO WHSE 2026-04-12 04/12") == ["COSTCO"]
+
+
+# --------------------------------------------------------------------------- #
+# Display labels: an entity carries a human-readable name, not just an id
+# (issue #25). The lens reveals this label, so it must be human-readable and
+# stable across a payee's variants.
+# --------------------------------------------------------------------------- #
+def test_display_label_is_a_human_readable_name():
+    # The brand anchor survives; store numbers / cities / filler do not.
+    assert display_label("COSTCO WHSE #0044") == "Costco"
+    assert display_label("WHOLE FOODS MKT #10029") == "Whole Foods"
+    assert display_label("SHELL 12345678 KENT WA") == "Shell"
+
+
+def test_display_label_falls_back_for_pure_filler():
+    # A memo with no significant token still yields a readable label, never "".
+    label = display_label("AUTOPAY PAYMENT - THANK YOU")
+    assert label and any(c.isalpha() for c in label)
+
+
+def test_resolve_display_returns_human_name_not_entity_id():
+    resolver = PayeeResolver()
+    label = resolver.resolve_display("COSTCO WHSE #0044")
+    assert label == "Costco"
+    assert not label.isdigit(), "display must not be the bare internal entity id"
+
+
+def test_display_is_stable_across_a_payees_variants():
+    """Every variant of one payee un-redacts to the same display label — the
+    label is fixed at entity creation and reused, matching alias stability."""
+    variants = ["COSTCO GAS #0044 KENT", "COSTCO WHOLESALE 44", "COSTCO WHSE #0044"]
+    resolver = PayeeResolver()
+    labels = {resolver.resolve_display(v) for v in variants}
+    assert labels == {"Costco"}
+    assert resolver.entity_count() == 1
+
+
+def test_match_display_is_non_mutating_and_none_for_unknown():
+    resolver = PayeeResolver()
+    resolver.resolve("WHOLEFDS #1029 SEA")
+    before = resolver.entity_count()
+
+    assert resolver.match_display("Whole Foods") is not None  # known -> label
+    assert resolver.match_display("Totally Unknown Merchant XYZ") is None
+    assert resolver.entity_count() == before, "match_display must not create entities"
+
+
+def test_distinct_entities_get_distinct_display_labels():
+    """Two distinct payees must never share a display label — the label is the
+    mapping's real value, so a collision would false-merge them at that layer."""
+    payees = load_manifest()["payees"]
+    variants = [v for vs in payees.values() for v in vs]
+    resolver = PayeeResolver()
+
+    label_by_entity: dict[int, str] = {}
+    for v in variants:
+        eid = resolver.resolve(v)
+        label_by_entity[eid] = resolver.display_name(eid)
+
+    labels = list(label_by_entity.values())
+    assert len(labels) == len(set(labels)), f"display label collision: {labels}"

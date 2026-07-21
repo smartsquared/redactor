@@ -102,11 +102,31 @@ def _acronym(tokens: list[str]) -> str:
     return "".join(t[0] for t in tokens)
 
 
+def display_label(memo: str) -> str:
+    """A human-readable display name for the payee behind a raw memo.
+
+    Built from the memo's *significant tokens* — the brand anchor
+    :func:`normalize` already isolates from the store-number / city / date noise —
+    title-cased so un-redaction reads as a name a human recognises ("Costco",
+    "Whole Foods"), not a store number or an internal id. Pure-filler memos with
+    no significant token fall back to their whitespace-cleaned raw form.
+
+    This is the label a resolved entity carries into the alias mapping as its
+    real value (S1.2): the lens reveals *this*, not the resolver's opaque entity
+    id (issue #25). It is a memo-string function only — no real data, no table.
+    """
+    sig = normalize(memo)
+    if sig:
+        return " ".join(tok.capitalize() for tok in sig)
+    return " ".join(memo.split()) or "Unknown Payee"
+
+
 @dataclass
 class _Entity:
     """One resolved payee: an id plus the accumulated evidence about it."""
 
     id: int
+    display: str = ""  # human-readable label, fixed at creation (issue #25)
     tokens: set[str] = field(default_factory=set)  # union of significant tokens
     members: list[list[str]] = field(default_factory=list)  # per-memo token lists
 
@@ -136,9 +156,54 @@ class PayeeResolver:
         self._threshold = threshold
         self._entities: list[_Entity] = []
         self._next_id = 1
+        # id -> display label, fixed at entity creation and kept even after a
+        # merge folds the entity away, so a display never silently changes under
+        # an already-issued alias. ``_claimed`` guards against two distinct
+        # entities landing on the same label, which would false-merge them at the
+        # mapping layer (the real value is the mapping key). Both only ever grow.
+        self._display_by_id: dict[int, str] = {}
+        self._claimed: set[str] = set()
 
     def entity_count(self) -> int:
         return len(self._entities)
+
+    def _claim_display(self, eid: int, memo: str) -> str:
+        """Fix a fresh entity's human-readable label, unique across entities.
+
+        The label is derived from the *creating* memo and then frozen, so every
+        later variant of the same payee reuses it (alias stability, §2.4). On the
+        rare chance two distinct entities derive the same label, a disambiguator
+        is appended — a same-label collision would false-merge them at the mapping
+        layer, since the display is the mapping's real value (issue #25).
+        """
+        base = display_label(memo)
+        label = base
+        while label in self._claimed:
+            label = f"{base} ({eid})"
+        self._claimed.add(label)
+        self._display_by_id[eid] = label
+        return label
+
+    def display_name(self, eid: int) -> str | None:
+        """The human-readable display label for an entity id, or ``None``.
+
+        This is what ingest stores as the ``PAYEE`` real value and the lens
+        reveals — a merchant name, never the opaque entity id (issue #25)."""
+        return self._display_by_id.get(eid)
+
+    def resolve_display(self, memo: str) -> str:
+        """Resolve *memo* to its payee entity and return that entity's display
+        label. The ingest seam (S1.4): same payee -> same stable, human-readable
+        real value in the mapping table."""
+        return self._display_by_id[self.resolve(memo)]
+
+    def match_display(self, memo: str) -> str | None:
+        """Non-mutating twin of :meth:`resolve_display` for the outbound proxy.
+
+        Returns the display label of the entity *memo* resolves to, or ``None``
+        when it matches nothing known — never creating a phantom entity."""
+        eid = self.match(memo)
+        return None if eid is None else self._display_by_id.get(eid)
 
     def match(self, memo: str) -> int | None:
         """Return the id of the entity *memo* resolves to, or ``None``.
@@ -181,6 +246,7 @@ class PayeeResolver:
         if not matches:
             ent = _Entity(id=self._next_id)
             self._next_id += 1
+            ent.display = self._claim_display(ent.id, memo)
             ent.absorb(tokens)
             self._entities.append(ent)
             return ent.id

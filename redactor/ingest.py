@@ -42,8 +42,11 @@ from redactor.alias import canonical, find_aliases
 from redactor.fixtures import Statement
 from redactor.projection import AliasRecord, AliasSpaceProjection
 
-# The S1.3 seam: a memo string -> the canonical key that identifies its payee
-# entity. Same key => same PAYEE alias.
+# The S1.3 seam: a memo string -> the key that identifies its payee entity. Same
+# key => same PAYEE alias. The key is stored verbatim as the mapping's real value
+# and is what the lens reveals at the render boundary, so it must be a
+# human-readable name, not an opaque internal id (issue #25): the S1.3 resolver
+# supplies ``PayeeResolver.resolve_display`` for exactly this.
 PayeeResolver = Callable[[str], str]
 
 

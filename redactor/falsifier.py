@@ -357,7 +357,7 @@ def build_client(store, *, statements: list[Statement] | None = None) -> Sanitiz
     statements = statements if statements is not None else canonical_statements()
     resolver = PayeeResolver()
     projection = ingest_statements(
-        store, statements, resolve_payee=lambda m: str(resolver.resolve(m))
+        store, statements, resolve_payee=resolver.resolve_display
     )
     redactor = OutboundRedactor.from_store(store, resolver)
     return SanitizedContextClient(projection=projection, redactor=redactor)
