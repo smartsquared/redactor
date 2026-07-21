@@ -21,6 +21,7 @@ fail is not a gate.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -72,6 +73,38 @@ def test_conversation_is_multi_turn_and_useful(tmp_path):
     # The conversation actually did work: at least one merchant was recognized
     # and redacted to a PAYEE token that the model then reasoned over.
     assert any(rec.probe.kind == "payee_spend" and rec.reply.tokens for rec in run.records)
+
+
+# --- payees un-redact to a human-readable name, not an entity key ----------- #
+
+
+def test_payee_unredacts_to_human_name_not_entity_key(tmp_path):
+    """A PAYEE token must un-redact at the local lens to a human-readable merchant
+    name, never the S1.3 resolver's internal entity key (issue #25).
+
+    The lens faithfully reveals whatever ingest stored as the PAYEE real value, so
+    this asserts ingest stored a display name rather than a canonical entity id:
+    the accountability render is "you overspent at Costco", not "... at 5".
+    """
+    with open_store(tmp_path / "s.db", KEY) as store:
+        run = run_conversation(store)
+
+    # The Costco payee-spend turn must name the merchant in the rendered output.
+    costco = next(r for r in run.records if r.probe.name == "costco-may-spend")
+    assert "costco" in costco.rendered.lower(), (
+        f"payee did not render to a human name: {costco.rendered!r}"
+    )
+
+    # The "... at <payee>." slot of the largest-expense turn must be a name, never
+    # a bare integer entity key (the exact symptom in the issue: "... at 5").
+    largest = next(r for r in run.records if r.probe.kind == "largest_expense")
+    match = re.search(r" at (.+?)\.\s*$", largest.rendered)
+    assert match, f"unexpected rendered shape: {largest.rendered!r}"
+    payee = match.group(1)
+    assert not payee.isdigit(), f"payee rendered as a bare entity key: {payee!r}"
+    assert any(c.isalpha() for c in payee), (
+        f"payee rendered without any letters: {payee!r}"
+    )
 
 
 # --- no seeded identifier crosses the model boundary ------------------------ #
