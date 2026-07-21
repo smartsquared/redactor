@@ -203,10 +203,10 @@ class OutboundRedactor:
             memo = txn.get("raw_payee")
             if not memo:
                 continue
-            eid = resolver.match(memo)
-            if eid is None:
+            key = resolver.match_display(memo)
+            if key is None:
                 continue
-            token = store.mapping.resolve_token("PAYEE", str(eid))
+            token = store.mapping.resolve_token("PAYEE", key)
             if token is None:
                 continue
             # The friendly form the user is likely to type is the memo's
@@ -218,10 +218,10 @@ class OutboundRedactor:
             payee_surfaces[memo] = token
 
         def payee_matcher(mention: str) -> str | None:
-            eid = resolver.match(mention)
-            if eid is None:
+            key = resolver.match_display(mention)
+            if key is None:
                 return None
-            return store.mapping.resolve_token("PAYEE", str(eid))
+            return store.mapping.resolve_token("PAYEE", key)
 
         return cls(
             literals=literals,

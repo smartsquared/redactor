@@ -61,7 +61,7 @@ def build_client(store) -> tuple[SanitizedContextClient, PayeeResolver]:
     """
     resolver = PayeeResolver()
     projection = ingest_statements(
-        store, load_statements(), resolve_payee=lambda m: str(resolver.resolve(m))
+        store, load_statements(), resolve_payee=resolver.resolve_display
     )
     redactor = OutboundRedactor.from_store(store, resolver)
     return SanitizedContextClient(projection=projection, redactor=redactor), resolver

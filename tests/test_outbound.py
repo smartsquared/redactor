@@ -30,18 +30,16 @@ def _build_redactor(store):
     then build the outbound redactor from the resulting store + resolver."""
     resolver = PayeeResolver()
     # The intended wiring of the S1.3 moat into the S1.4 ingest seam: the resolver
-    # collapses memo variants to one stable entity, whose id is the alias key.
-    def resolve_payee(memo: str) -> str:
-        return str(resolver.resolve(memo))
-
-    ingest_statements(store, load_statements(), resolve_payee=resolve_payee)
+    # collapses memo variants to one stable entity, whose human-readable display
+    # label is the alias key it stores in the mapping (issue #25).
+    ingest_statements(store, load_statements(), resolve_payee=resolver.resolve_display)
     return OutboundRedactor.from_store(store, resolver)
 
 
 def _payee_token_for(store, resolver, memo: str) -> str:
-    eid = resolver.match(memo)
-    assert eid is not None
-    token = store.mapping.resolve_token("PAYEE", str(eid))
+    key = resolver.match_display(memo)
+    assert key is not None
+    token = store.mapping.resolve_token("PAYEE", key)
     assert token is not None
     return token
 
@@ -54,7 +52,7 @@ def test_known_payee_mention_redacts_to_its_token(tmp_path):
         resolver = PayeeResolver()
         ingest_statements(
             store, load_statements(),
-            resolve_payee=lambda m: str(resolver.resolve(m)),
+            resolve_payee=resolver.resolve_display,
         )
         redactor = OutboundRedactor.from_store(store, resolver)
 
