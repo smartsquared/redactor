@@ -36,11 +36,60 @@ alias-space projection that holds no real values.
 """
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable
 
 from redactor.alias import canonical, find_aliases
 from redactor.fixtures import Statement
+from redactor.lint import LintFinding, format_findings, lint_projection
 from redactor.projection import AliasRecord, AliasSpaceProjection
+
+
+class LintFailure(Exception):
+    """A projection failed the detection-based leak-lint (story S0.2).
+
+    Raised as ingest's mandatory final step when a projection carries anything
+    real-looking. Carries the findings so a caller can render them locally; the
+    exception message stays alias-space-agnostic (it does not itself echo the
+    offending values, which live on ``findings``).
+    """
+
+    def __init__(self, findings: list[LintFinding]):
+        self.findings = findings
+        super().__init__(
+            f"projection failed leak-lint with {len(findings)} finding(s); "
+            f"refusing to emit (pass allow_leaks=True to override)"
+        )
+
+
+# ANSI red, used only to make the override warning loud on a local terminal.
+# This is stderr on the user's own machine — never part of an off-machine
+# artifact — so a control code here does not cross the privacy boundary.
+_RED = "\x1b[31m"
+_RESET = "\x1b[0m"
+
+
+def _lint_or_refuse(
+    projection: AliasSpaceProjection, *, allow_leaks: bool
+) -> AliasSpaceProjection:
+    """Ingest's mandatory final step: lint the projection before it can escape.
+
+    Zero findings → the projection is returned unchanged. Findings → refuse by
+    raising :class:`LintFailure`, unless *allow_leaks* is set, in which case the
+    projection is returned but a loud red warning is printed to stderr so the
+    override is never silent.
+    """
+    findings = lint_projection(projection)
+    if not findings:
+        return projection
+    if not allow_leaks:
+        raise LintFailure(findings)
+    print(
+        f"{_RED}redactor: WARNING — emitting a projection that FAILED the "
+        f"leak-lint (allow_leaks override).{_RESET}\n{format_findings(findings)}",
+        file=sys.stderr,
+    )
+    return projection
 
 # The S1.3 seam: a memo string -> the key that identifies its payee entity. Same
 # key => same PAYEE alias. The key is stored verbatim as the mapping's real value
@@ -99,8 +148,15 @@ def ingest_statement(
     statement: Statement,
     *,
     resolve_payee: PayeeResolver = conservative_payee_key,
+    lint: bool = True,
+    allow_leaks: bool = False,
 ) -> list[AliasRecord]:
-    """Ingest one statement: raw rows to the store, alias records returned."""
+    """Ingest one statement: raw rows to the store, alias records returned.
+
+    Runs the detection-based leak-lint (story S0.2) as its final step unless
+    *lint* is off. A failing projection is refused (``LintFailure``) unless
+    *allow_leaks* is set, which emits it with a loud red warning instead.
+    """
     account_token = _issue_alias(store, "ACCT", statement.account_id)
     institution_token = _issue_alias(store, "INST", statement.institution)
 
@@ -127,6 +183,8 @@ def ingest_statement(
                 category=txn.category,
             )
         )
+    if lint:
+        _lint_or_refuse(AliasSpaceProjection(records), allow_leaks=allow_leaks)
     return records
 
 
@@ -135,13 +193,26 @@ def ingest_statements(
     statements: Iterable[Statement],
     *,
     resolve_payee: PayeeResolver = conservative_payee_key,
+    lint: bool = True,
+    allow_leaks: bool = False,
 ) -> AliasSpaceProjection:
     """Ingest many statements end-to-end.
 
     Raw transactions are persisted to *store*; the return value is the combined
     alias-space projection — a separate, off-machine-safe output.
+
+    The combined projection passes through the detection-based leak-lint (story
+    S0.2) as the mandatory final step before it is returned: a projection with
+    any real-looking identifier is refused (``LintFailure``) unless *allow_leaks*
+    is set, which emits it with a loud red warning. Per-statement linting is
+    skipped here so the authoritative check runs once over the whole output.
     """
     records: list[AliasRecord] = []
     for statement in statements:
-        records.extend(ingest_statement(store, statement, resolve_payee=resolve_payee))
-    return AliasSpaceProjection(records)
+        records.extend(
+            ingest_statement(store, statement, resolve_payee=resolve_payee, lint=False)
+        )
+    projection = AliasSpaceProjection(records)
+    if lint:
+        _lint_or_refuse(projection, allow_leaks=allow_leaks)
+    return projection
