@@ -148,10 +148,18 @@ def ingest_statement(
     statement: Statement,
     *,
     resolve_payee: PayeeResolver = conservative_payee_key,
+    registry=None,
     lint: bool = True,
     allow_leaks: bool = False,
 ) -> list[AliasRecord]:
     """Ingest one statement: raw rows to the store, alias records returned.
+
+    Payee aliasing has two seams. By default the conservative *resolve_payee*
+    keyer is used (exact-match, false-merge-free). Pass a
+    :class:`~redactor.payees.PayeeRegistry` as *registry* to run the story-S1.1
+    entity-resolution flow instead: it groups memo variants onto one stable
+    ``PAYEE`` token, persists the grouping + confidence, and flags low-confidence
+    groupings for review — the path the ``redactor ingest`` CLI wires up.
 
     Runs the detection-based leak-lint (story S0.2) as its final step unless
     *lint* is off. A failing projection is refused (``LintFailure``) unless
@@ -171,7 +179,10 @@ def ingest_statement(
             raw_memo=None,
             source_file=statement.source.name,
         )
-        payee_token = _issue_alias(store, "PAYEE", resolve_payee(txn.description))
+        if registry is not None:
+            payee_token = registry.record(txn.description)
+        else:
+            payee_token = _issue_alias(store, "PAYEE", resolve_payee(txn.description))
         records.append(
             AliasRecord(
                 account=account_token,
