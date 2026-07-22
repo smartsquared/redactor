@@ -172,3 +172,48 @@ $ python -m examples.sanitized_context_roundtrip
 - **It does not hold finance-domain conversation logic.** Monthly-close and
   accountability-partner behavior belongs to the consumer (sakuma-finance). This
   is the pipe, not the conversation.
+
+## 8. Export provenance — the m02 import seam (cross-repo contract)
+
+The in-memory `ContextWindow` above is the live conversation surface. The **m02**
+import path is different: sakuma-finance imports a projection *file* off the disk
+(`sakuma-finance import --projection <file>`), and it refuses any projection that
+does not carry redactor's **green lint attestation**. `redactor export`
+([`redactor/export.py`](../redactor/export.py)) is the only command that produces
+such a file: it rebuilds a month's projection from the store, runs the S0.2
+detection lint, and — only when the lint is green — writes the projection envelope
+with a `provenance` block. A red projection writes nothing and exits non-zero.
+
+The written file is the alias-space projection envelope
+([`redactor/projection.py`](../redactor/projection.py)) plus one added key:
+
+```json
+{
+  "version": 1,
+  "records": [ ... ],
+  "provenance": {
+    "verdict": "green",
+    "timestamp": "2026-07-22T17:04:33.512+00:00",
+    "linter": "redactor.lint",
+    "linter_version": 1
+  }
+}
+```
+
+**This `provenance` block is a cross-repo contract.** Its shape must stay in step
+with sakuma-finance's `records_import.read_attestation` (`LintAttestation`):
+
+| Field            | Type   | Meaning                                                       |
+|------------------|--------|--------------------------------------------------------------|
+| `verdict`        | `str`  | Always `"green"` in a written file (red is never written).   |
+| `timestamp`      | `str`  | ISO-8601 UTC instant the attestation was stamped.            |
+| `linter`         | `str`  | The linter identity (`redactor.lint`).                       |
+| `linter_version` | `int`  | `redactor.export.LINTER_VERSION` — the attestation contract version. |
+
+Only a green file is ever written, so a consumer that finds a `provenance` block
+with `verdict == "green"` and a `linter_version` it understands may trust the
+attestation. **Changing any field here is a contract change**: bump
+`LINTER_VERSION`, update this table, and update the reader on the sakuma-finance
+side in the same wave, so the producer and reader can never silently drift. The
+shape is pinned on this side by `tests/test_export_cli.py`
+(`test_export_provenance_shape_is_the_cross_repo_contract`).

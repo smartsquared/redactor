@@ -170,6 +170,27 @@ round trip over the fixtures:
 $ python -m examples.sanitized_context_roundtrip
 ```
 
+## Exporting a lint-attested projection (`redactor export`)
+
+The m02 import seam: `sakuma-finance import --projection <file>` refuses any
+projection that does not carry redactor's **green lint attestation**. `redactor
+export` produces exactly that file — it rebuilds a month's alias-space projection
+from the store, runs the detection lint, and writes the projection with a
+`provenance` attestation block **only when the lint is green**. A projection that
+fails the lint writes nothing and exits non-zero (findings go to stderr, the local
+render surface). Summary output is alias-space only.
+
+```console
+$ redactor export --store ~/.redactor/store.db --month 2026-05 --out proj-2026-05.json
+2026-05: 42 rows, lint: green — wrote proj-2026-05.json
+
+$ redactor export --store ~/.redactor/store.db --all-months --out ./projections/
+```
+
+The `provenance` block is a cross-repo contract with sakuma-finance's
+`records_import.read_attestation`; its shape is documented and pinned in
+[docs/sanitized-context-api.md](docs/sanitized-context-api.md) §8.
+
 ## Deployment
 
 Not yet deployed. Local-first by design — the gateway and its mapping table run on the user's machine.
