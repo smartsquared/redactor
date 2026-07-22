@@ -146,6 +146,49 @@ def test_ingest_requires_a_key(tmp_path, capsys, empty_keychain):
     assert "key" in capsys.readouterr().err.lower()
 
 
+def _collapsing_csv(path, rows: int) -> None:
+    """A statement whose rows all resolve to a single payee — the shape the real
+    ingest collapse (issue #37) produced. Provably-fake merchant, invalid amounts."""
+    lines = ["Date,Description,Amount,Balance"]
+    for i in range(rows):
+        lines.append(f"2026-04-{(i % 27) + 1:02d},STARBUCKS STORE {5000 + i} SEATTLE WA,-4.75,0.00")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_ingest_warns_on_payee_collapse(tmp_path, capsys):
+    """A statement with hundreds of rows collapsing to ~one payee must raise a
+    loud payee-per-row sanity warning in the summary (issue #37) — the collapse
+    has to be visible even before the review flow runs."""
+    csv = tmp_path / "stmt.csv"  # neutral name: the warning, not the path, must say "collapse"
+    _collapsing_csv(csv, rows=250)
+    db = tmp_path / "store.db"
+    rc = main(["ingest", str(csv), "--store", str(db), "--key", KEY])
+    assert rc == 0
+    captured = capsys.readouterr()
+    blob = (captured.out + captured.err).lower()
+    assert "collapse" in blob, "expected a loud payee collapse warning in the ingest summary"
+    assert "ratio" in blob, "the warning must report the payee-per-row ratio"
+
+
+def test_ingest_collapse_warning_is_alias_space_only(tmp_path, capsys):
+    csv = tmp_path / "stmt.csv"
+    _collapsing_csv(csv, rows=250)
+    db = tmp_path / "store.db"
+    main(["ingest", str(csv), "--store", str(db), "--key", KEY])
+    captured = capsys.readouterr()
+    blob = captured.out + captured.err
+    # The warning is a ratio and counts — never a raw memo or display label.
+    assert "STARBUCKS" not in blob.upper()
+
+
+def test_healthy_ingest_does_not_warn_about_collapse(tmp_path, capsys):
+    db = tmp_path / "store.db"
+    main(["ingest", str(CHECKING_CSV), str(CREDIT_OFX), "--store", str(db), "--key", KEY])
+    captured = capsys.readouterr()
+    blob = (captured.out + captured.err).lower()
+    assert "collapse" not in blob, "a healthy statement must not trip the collapse warning"
+
+
 def test_ingest_map_flag_parses(tmp_path, capsys):
     opaque = tmp_path / "opaque.csv"
     opaque.write_text(
