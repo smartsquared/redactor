@@ -1,12 +1,21 @@
 """The ``redactor`` command-line interface.
 
-Currently exposes one subcommand, ``lens`` — the inbound re-substitution of
-story S2.2. The lens turns a model's alias-space text back into plain language
-for a human to read, and it does so **only where the mapping table lives**: it
-opens the local encrypted store with ``create=False`` and refuses (non-zero
-exit, nothing rendered) when no decryptable table is present. That refusal is
-the security property, not an ergonomic nicety — un-redaction off-machine would
-defeat the whole gateway (docs/brief.md §"Un-redaction mechanism").
+Subcommands:
+
+  * ``init`` — create the encrypted store and custody a generated high-entropy
+    key in the OS keychain (story S0.1, ADR-0001 "Key custody").
+  * ``status`` — report store location / schema version / key availability
+    without touching data.
+  * ``lens`` — inbound re-substitution (story S2.2): render a model's alias-space
+    text back to plain language, **only where the mapping table lives**. It
+    opens the store with ``create=False`` and refuses (non-zero exit, nothing
+    rendered) when no decryptable table is present — un-redaction off-machine
+    would defeat the whole gateway (docs/brief.md §"Un-redaction mechanism").
+
+Key custody, in priority order, is shared across subcommands (:func:`_resolve_key`):
+``--key`` > ``$REDACTOR_KEY`` > the OS keychain. The first two are CI/test
+overrides; the keychain is the human default so no passphrase lives in shell
+history or the process environment. **No subcommand ever prints or logs the key.**
 
 Real values only ever go to stdout, the local render surface. Errors and the
 optional substitution summary go to stderr, so stdout stays a clean, pipeable
@@ -18,12 +27,140 @@ import argparse
 import os
 import sys
 
+from redactor import keychain
 from redactor.lens import lens, resolver_from_table
-from redactor.store import StoreError, open_store
+from redactor.store import BadKeyError, StoreError, open_store
 
 # Env var checked when --key is not passed, so the passphrase need not appear in
 # shell history or the process table.
 KEY_ENV = "REDACTOR_KEY"
+
+
+def _override_key(args: argparse.Namespace) -> str | None:
+    """The explicit CI/test key override: ``--key`` then ``$REDACTOR_KEY``.
+
+    Returns ``None`` when neither is set, meaning "fall back to the keychain".
+    """
+    return args.key if args.key is not None else os.environ.get(KEY_ENV)
+
+
+def _resolve_key(args: argparse.Namespace) -> str | None:
+    """Resolve the store key: override first, then the OS keychain.
+
+    Returns ``None`` if no key can be found anywhere (the caller turns that into
+    an actionable message). A :class:`keychain.KeychainUnavailable` from the
+    backend propagates — callers report it rather than silently continuing.
+    """
+    override = _override_key(args)
+    if override:
+        return override
+    return keychain.get_key(args.store)
+
+
+# -- init ---------------------------------------------------------------------
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    store_path = Path(args.store)
+    if store_path.exists() and store_path.stat().st_size > 0:
+        print(
+            f"redactor init: a store already exists at {store_path}; refusing to "
+            f"overwrite it. Remove it first, or run `redactor status --store "
+            f"{store_path}` to inspect it.",
+            file=sys.stderr,
+        )
+        return 1
+
+    override = _override_key(args)
+    if override:
+        # An explicit key is a CI/test override: use it, but do not write it to
+        # the keychain — custody is for the human default, not for ephemeral
+        # test/CI keys.
+        key = override
+        custodied = False
+    else:
+        # Human default: mint a high-entropy key and custody it in the keychain.
+        # A key never displayed and never typed cannot leak through history.
+        key = keychain.generate_key()
+        try:
+            keychain.set_key(store_path, key)
+        except keychain.KeychainUnavailable as exc:
+            print(f"redactor init: {exc}", file=sys.stderr)
+            return 2
+        custodied = True
+
+    try:
+        open_store(store_path, key, create=True).close()
+    except StoreError as exc:
+        # Roll back custody so a failed init leaves nothing half-built behind.
+        if not override:
+            keychain.delete_key(store_path)
+        print(f"redactor init: could not create store: {exc}", file=sys.stderr)
+        return 1
+
+    where = "the OS keychain" if custodied else f"the supplied override (${KEY_ENV}/--key)"
+    print(
+        f"redactor init: created encrypted store at {store_path}; key custodied in {where}."
+    )
+    return 0
+
+
+# -- status -------------------------------------------------------------------
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    store_path = Path(args.store)
+    print(f"store:  {store_path}")
+
+    if not (store_path.exists() and store_path.stat().st_size > 0):
+        print("state:  not initialized")
+        print(
+            f"redactor status: no store at {store_path}. Run `redactor init "
+            f"--store {store_path}` to create one.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        key = _resolve_key(args)
+    except keychain.KeychainUnavailable as exc:
+        print("key:    unavailable")
+        print(f"redactor status: {exc}", file=sys.stderr)
+        return 2
+
+    if not key:
+        print("key:    not found")
+        print(
+            f"redactor status: no key for {store_path} in the keychain, and no "
+            f"--key/${KEY_ENV} override. The store cannot be opened without it.",
+            file=sys.stderr,
+        )
+        return 1
+
+    key_source = "override" if _override_key(args) else "keychain"
+    try:
+        with open_store(store_path, key, create=False) as store:
+            schema = store.schema_version
+    except BadKeyError:
+        print(f"key:    present ({key_source}) but does not decrypt the store")
+        print(
+            f"redactor status: the {key_source} key does not decrypt {store_path} "
+            f"(wrong key or corrupt file).",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as exc:
+        print(f"redactor status: cannot open store: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"schema: v{schema}")
+    print(f"key:    available ({key_source})")
+    print("state:  ready")
+    return 0
 
 
 def _cmd_lens(args: argparse.Namespace) -> int:
@@ -68,6 +205,52 @@ def build_parser() -> argparse.ArgumentParser:
         description="redactor — a privacy gateway (bidirectional alias proxy).",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    init_p = sub.add_parser(
+        "init",
+        help="Create the encrypted store and custody a generated key in the OS "
+        "keychain.",
+        description=(
+            "Create the local encrypted store and, by default, generate a "
+            "high-entropy key custodied in the OS keychain — no passphrase to "
+            "remember or leak. Pass --key or set $REDACTOR_KEY to supply a key "
+            "explicitly (CI/tests); an override is never written to the keychain."
+        ),
+    )
+    init_p.add_argument(
+        "--store",
+        required=True,
+        metavar="PATH",
+        help="Path to the local encrypted store to create.",
+    )
+    init_p.add_argument(
+        "--key",
+        default=None,
+        help=f"Key override (CI/tests). Defaults to ${KEY_ENV}, else the OS keychain.",
+    )
+    init_p.set_defaults(func=_cmd_init)
+
+    status_p = sub.add_parser(
+        "status",
+        help="Report store location, schema version, and key availability.",
+        description=(
+            "Report the store's location, schema version, and whether a key is "
+            "available to open it — without reading any data. Key resolution is "
+            "--key, then $REDACTOR_KEY, then the OS keychain."
+        ),
+    )
+    status_p.add_argument(
+        "--store",
+        required=True,
+        metavar="PATH",
+        help="Path to the local encrypted store to inspect.",
+    )
+    status_p.add_argument(
+        "--key",
+        default=None,
+        help=f"Key override (CI/tests). Defaults to ${KEY_ENV}, else the OS keychain.",
+    )
+    status_p.set_defaults(func=_cmd_status)
 
     lens_p = sub.add_parser(
         "lens",

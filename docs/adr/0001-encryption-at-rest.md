@@ -100,6 +100,14 @@ why option A is complementary rather than rejected — keychain-for-key,
 SQLCipher-for-store. For S0.3 the key is supplied by the caller to
 `open_store(path, key)`.
 
+> **Delivered in m02 · S0.1.** `redactor init` now generates a high-entropy key
+> and custodies it in the OS keychain via the `keyring` seam
+> (`redactor/keychain.py`, macOS first); `redactor status` reports key
+> availability without touching data. `--key`/`$REDACTOR_KEY` remain as CI/test
+> overrides. No code path prints or logs the key. Non-macOS keychain backends
+> and key rotation (`PRAGMA rekey`) stay deferred — the seam is in place for the
+> backend swap.
+
 ### Off-store serialization ban (crown-jewel invariant)
 
 Encryption at rest protects the file; it does **not** stop application code from

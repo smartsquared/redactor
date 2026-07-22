@@ -20,6 +20,31 @@ This repo is a **product of the sakuma process** — it was built by the sakuma 
 
 Nothing shipped yet. v0 target is contract-shaped, not feature-shaped: the first consumer (`sakuma-finance`) can hold a useful conversation through the gateway with no identifiers leaking, verified against fixtures. See [docs/brief.md](docs/brief.md).
 
+## Store lifecycle (`redactor init` / `redactor status`)
+
+`redactor init` creates the local encrypted store (SQLCipher, per
+[ADR-0001](docs/adr/0001-encryption-at-rest.md)) and, by default, generates a
+high-entropy key custodied in the **OS keychain** (macOS Keychain first) — no
+passphrase to remember, and none in your shell history or environment. The key
+is never displayed or logged.
+
+```console
+$ redactor init --store ~/.redactor/store.db
+redactor init: created encrypted store at ~/.redactor/store.db; key custodied in the OS keychain.
+
+$ redactor status --store ~/.redactor/store.db
+store:  ~/.redactor/store.db
+schema: v2
+key:    available (keychain)
+state:  ready
+```
+
+`redactor status` reports the store location, schema version, and whether a key
+is available to open it — **without reading any data**. Key resolution across
+every subcommand is `--key`, then `$REDACTOR_KEY`, then the keychain; the first
+two are CI/test overrides and are never written to custody. Wrong or missing
+keys fail with an actionable message and a non-zero exit.
+
 ## The local lens (`redactor lens`)
 
 The inbound half of the proxy. A model answers in alias-space (`PAYEE-7`,
