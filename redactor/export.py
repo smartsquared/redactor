@@ -122,7 +122,10 @@ def _record_from_row(store, row: dict) -> AliasRecord:
     lint-clean and off-machine-safe regardless."""
     return AliasRecord(
         account=_alias_or_raw(store, "ACCT", row["account_id"]) or "",
-        institution=_alias_or_raw(store, "INST", row.get("institution")) or "",
+        # None, not "": a source with no institution column (bare CSV exports)
+        # has nothing to alias, and lint treats None as unknown but "" as a
+        # non-conforming identifying value.
+        institution=_alias_or_raw(store, "INST", row.get("institution")) or None,
         payee=_payee_token(store, row["raw_payee"]),
         date=row["posted_date"],
         amount=row["amount_cents"] / 100,

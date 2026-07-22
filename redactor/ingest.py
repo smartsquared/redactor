@@ -166,7 +166,12 @@ def ingest_statement(
     *allow_leaks* is set, which emits it with a loud red warning instead.
     """
     account_token = _issue_alias(store, "ACCT", statement.account_id)
-    institution_token = _issue_alias(store, "INST", statement.institution)
+    # A bare CSV export names no institution; don't mint an INST alias for "".
+    # The projection carries None (unknown) instead — lint treats None as
+    # unknown but any non-token string, "" included, as non-conforming.
+    institution_token = (
+        _issue_alias(store, "INST", statement.institution) if statement.institution else None
+    )
 
     # Document-frequency pre-pass (issue #37): teach the entity resolver how
     # widely each memo token is spread across this whole statement before any
