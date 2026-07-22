@@ -168,6 +168,15 @@ def ingest_statement(
     account_token = _issue_alias(store, "ACCT", statement.account_id)
     institution_token = _issue_alias(store, "INST", statement.institution)
 
+    # Document-frequency pre-pass (issue #37): teach the entity resolver how
+    # widely each memo token is spread across this whole statement before any
+    # grouping decision is made, so ubiquitous transaction filler (VISA, POS, a
+    # big-city name) is recognised as non-identifying from the first row rather
+    # than snowballing distinct merchants together while frequency warms up.
+    if registry is not None:
+        for txn in statement.transactions:
+            registry.observe(txn.description)
+
     records: list[AliasRecord] = []
     for txn in statement.transactions:
         # Raw fields land ONLY in the encrypted store.

@@ -47,6 +47,12 @@ from redactor.store import BadKeyError, StoreError, open_store
 # shell history or the process table.
 KEY_ENV = "REDACTOR_KEY"
 
+# ANSI red, used only to make a local-terminal warning loud. This is the user's
+# own machine — never an off-machine artifact — so a control code here does not
+# cross the privacy boundary.
+_RED = "\x1b[31m"
+_RESET = "\x1b[0m"
+
 
 def _override_key(args: argparse.Namespace) -> str | None:
     """The explicit CI/test key override: ``--key`` then ``$REDACTOR_KEY``.
@@ -257,6 +263,35 @@ def _parse_map(specs: list[str] | None) -> dict[str, str]:
     return mapping
 
 
+# A payee-per-row sanity floor (issue #37). Below roughly one distinct payee per
+# _COLLAPSE_ROWS_PER_PAYEE rows, on a statement of at least _COLLAPSE_MIN_ROWS
+# rows, entity resolution has very likely over-merged (the failure that folded a
+# real 9,717-row statement into a single payee). A short statement legitimately
+# has few payees, so the row floor keeps this from crying wolf on small files.
+_COLLAPSE_MIN_ROWS = 100
+_COLLAPSE_ROWS_PER_PAYEE = 100
+
+
+def _collapse_warning(rows: int, distinct_payees: int) -> str | None:
+    """A loud, alias-space payee-collapse warning for the ingest summary, or None.
+
+    Compares the distinct-payee-to-row ratio against a sanity floor so a runaway
+    entity-resolution merge is visible in the summary itself — before the review
+    flow runs. Returns counts and a ratio only; never a memo or a display label,
+    so it is safe on a terminal that might be copy-pasted."""
+    if rows < _COLLAPSE_MIN_ROWS or distinct_payees == 0:
+        return None
+    if rows / distinct_payees < _COLLAPSE_ROWS_PER_PAYEE:
+        return None
+    ratio = distinct_payees / rows
+    return (
+        f"{_RED}redactor: WARNING — payee collapse suspected: only "
+        f"{distinct_payees} distinct payee(s) for {rows} rows (ratio {ratio:.4f}). "
+        f"Entity resolution may have over-merged; run "
+        f"`redactor payees --review` before trusting this ingest.{_RESET}"
+    )
+
+
 def _lint_verdict(projection: AliasSpaceProjection) -> str:
     """A short, alias-space lint verdict for a projection.
 
@@ -337,6 +372,15 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
                 f"{new_payees} new payees, {new_aliases} aliases issued, "
                 f"lint: {verdict}"
             )
+
+            # Payee-per-row sanity check (issue #37): counts the *distinct* payee
+            # tokens this file's rows resolved to — new or reused — so a runaway
+            # entity-resolution merge is loud in the summary even on a re-ingest
+            # that issues no new aliases, before the review flow is ever run.
+            distinct_payees = len({r.payee for r in records})
+            warning = _collapse_warning(len(records), distinct_payees)
+            if warning is not None:
+                print(warning, file=sys.stderr)
 
         # Flag low-confidence payee groupings for review (story S1.1). This is
         # alias-space only — tokens and a confidence number, never a raw memo or
