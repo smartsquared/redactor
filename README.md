@@ -65,6 +65,38 @@ decryptable table is present. The passphrase comes from `--key` or the
 `REDACTOR_KEY` environment variable. Real values are written to stdout (the
 local render surface) only — never to any artifact that leaves the machine.
 
+## Ingesting real statements (`redactor ingest`)
+
+The outbound half of getting started: pull a real month of bank exports into the
+local store. The loaders are **tolerant of real-world mess** — header-name
+variants, a UTF-8 BOM or Windows codepage, `MM/DD/YYYY` dates, split
+debit/credit columns, `$`/comma/accounting-paren amounts, and both OFX dialects
+(1.x SGML and 2.x XML). When the header heuristics can't place a column, name it
+explicitly with `--map`:
+
+```console
+$ redactor ingest checking.csv statement.ofx --store ~/.redactor/store.db
+checking.csv: 31 rows, 12 new payees, 14 aliases issued, lint: clean
+statement.ofx: 28 rows, 3 new payees, 3 aliases issued, lint: clean
+
+$ redactor ingest weird.csv --store ~/.redactor/store.db --map date=Posted,amount=Amt,description=Details
+```
+
+Raw fields land **only** in the encrypted store; the per-file summary is
+**alias-space only** (counts and a lint verdict — never a memo or account id).
+Parse failures are reported **without echoing the offending cell** — you get the
+row number and column name, safe to copy-paste; the raw value appears only when
+you pass `--show-raw` on your own machine:
+
+```console
+$ redactor ingest broken.csv --store ~/.redactor/store.db
+redactor ingest: FAILED broken.csv row 14 field 'amount': amount is not a number
+```
+
+A bad file fails on its own and never aborts the batch — the good files still
+ingest. Re-ingesting is safe: aliases are stable, so a second pass issues zero
+new ones.
+
 ## The sanitized-context API
 
 The contract the first consumer (`sakuma-finance`) speaks to hold a conversation
