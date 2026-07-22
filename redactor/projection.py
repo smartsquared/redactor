@@ -32,9 +32,12 @@ PROJECTION_VERSION = 1
 class AliasRecord:
     """One transaction in alias-space. Every identifying field is a token."""
 
-    account: str        # ACCT-n — the user's own account
-    institution: str    # INST-n — the financial institution
-    payee: str          # PAYEE-n — the resolved counterparty
+    account: str                 # ACCT-n — the user's own account
+    institution: str | None      # INST-n, or None when the source carries no
+    #                              institution (a bare CSV export has none) —
+    #                              never "" and never a raw name; lint treats
+    #                              None as "unknown", any string as a token
+    payee: str                   # PAYEE-n — the resolved counterparty
     date: str           # ISO YYYY-MM-DD, real (not aliased)
     amount: float       # signed; negative = money out, real (not aliased)
     ttype: str = ""     # DEBIT/CREDIT when known; non-identifying

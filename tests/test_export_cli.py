@@ -184,3 +184,39 @@ def test_export_refuses_missing_store(tmp_path, capsys):
     ])
     assert rc != 0
     assert not out.exists()
+
+
+def test_export_rows_without_institution_lint_green_with_null_institution(tmp_path, capsys):
+    """A source with no institution (bare CSV export, or rows persisted before the
+    institution column existed) must export green with ``institution: null`` —
+    never ``""``, which lint rightly rejects as a non-conforming identifying
+    value (found on the first real store, issue #41 follow-up)."""
+    import json
+
+    db = tmp_path / "store.db"
+    main(["init", "--store", str(db), "--key", KEY])
+    capsys.readouterr()
+
+    with open_store(db, KEY, create=False) as store:
+        acct = store.mapping.assign("ACCT", "checking-no-inst")
+        payee = store.mapping.assign("PAYEE", "Some Brand")
+        store.add_payee_variant("SOME BRAND", payee, 1.0)
+        store.add_raw_transaction(
+            account_id="checking-no-inst",
+            posted_date="2026-05-15",
+            amount_cents=-1234,
+            raw_payee="SOME BRAND",
+            institution=None,
+        )
+        assert acct
+
+    out = tmp_path / "proj.json"
+    rc = main([
+        "export", "--store", str(db), "--key", KEY,
+        "--month", "2026-05", "--out", str(out),
+    ])
+    capsys.readouterr()
+    assert rc == 0, "missing institution is unknown, not a leak — export must be green"
+    data = json.loads(out.read_text())
+    assert data["records"][0]["institution"] is None
+    assert data["provenance"]["verdict"] == "green"
