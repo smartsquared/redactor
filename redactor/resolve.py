@@ -28,6 +28,16 @@ The resolver is deliberately layered, cheapest-and-safest first:
    (docs/alias-contract.md §2.5), so the algorithm is tuned to prefer a stray
    new entity over ever fusing two distinct merchants.
 
+Two follow-on guards keep a *degraded* grouping from running away (issue #39).
+An entity may be flagged as a snowball-in-progress (its shared-token identity has
+grown past the anchor cap, so new variants join at a below-review confidence
+rather than a silent 1.0 lock); once it has absorbed :data:`_DEGRADED_VARIANT_CAP`
+such degraded variants it stops being a merge candidate entirely, so a further
+borderline memo mints a fresh entity instead of accreting a 113-variant
+mega-entity that is expensive to un-merge. Separately, :func:`display_label`
+consults the same document-frequency signal to drop the statement's fixed
+boilerplate tail from an entity's human-readable label, leaving just the brand.
+
 This module holds no real data and never touches the mapping table — it works on
 memo *strings* only and returns opaque integer entity ids. Binding those ids to
 ``PAYEE-n`` aliases (and persisting them) is the crown-jewel path in S1.2.
@@ -75,6 +85,15 @@ _ANCHOR_TOKEN_CAP = 8
 # clears the resolver threshold (the memo joins rather than splintering) but sits
 # below the review threshold, so the degraded grouping is surfaced to a human.
 _DEGRADED_LOCK = 0.90
+
+# The most *degraded* (sub-lock) variants one entity may absorb before it stops
+# being a merge candidate entirely (issue #39). Flagging a degraded merge for
+# review is not enough on its own: a real statement drove one entity to 113
+# variants, every join a 0.90 degraded merge, and it kept absorbing. Once an
+# entity has swallowed this many sub-lock variants it is a runaway snowball, so a
+# further borderline memo mints a *fresh* entity instead. Splitting a 15-variant
+# entity later is the human's cheap fix; un-merging 113 is not.
+_DEGRADED_VARIANT_CAP = 15
 
 # The two-letter US state codes — geographic noise, never a payee signal.
 _US_STATES = frozenset(
@@ -132,21 +151,37 @@ def _acronym(tokens: list[str]) -> str:
     return "".join(t[0] for t in tokens)
 
 
-def display_label(memo: str) -> str:
+def display_label(memo: str, is_generic=None, *, fallback: str | None = None) -> str:
     """A human-readable display name for the payee behind a raw memo.
 
     Built from the memo's *significant tokens* — the brand anchor
     :func:`normalize` already isolates from the store-number / city / date noise —
     title-cased so un-redaction reads as a name a human recognises ("Costco",
-    "Whole Foods"), not a store number or an internal id. Pure-filler memos with
-    no significant token fall back to their whitespace-cleaned raw form.
+    "Whole Foods"), not a store number or an internal id.
+
+    Real statements bolt a fixed boilerplate tail onto every memo ("Category Code
+    Withdrawal Debit Card Visa Debit Card") whose words are not in the stopword
+    list, so :func:`normalize` keeps them and they title-case into the label
+    (issue #39). When *is_generic* is supplied — the resolver's online
+    document-frequency predicate, the same signal that demotes generic tokens out
+    of the lock (issue #37) — those high-DF tokens are dropped, leaving just the
+    brand tokens. A memo that is *only* boilerplate has no brand token left, so it
+    falls back to *fallback* (e.g. the alias token) rather than a boilerplate
+    string; a pure-filler memo with no significant token at all falls back to its
+    whitespace-cleaned raw form.
 
     This is the label a resolved entity carries into the alias mapping as its
     real value (S1.2): the lens reveals *this*, not the resolver's opaque entity
     id (issue #25). It is a memo-string function only — no real data, no table.
     """
     sig = normalize(memo)
-    if sig:
+    if is_generic is not None:
+        brand = [tok for tok in sig if not is_generic(tok)]
+        if brand:
+            return " ".join(tok.capitalize() for tok in brand)
+        if sig:  # significant tokens survived normalize but every one is boilerplate
+            return fallback if fallback is not None else " ".join(memo.split())
+    elif sig:
         return " ".join(tok.capitalize() for tok in sig)
     return " ".join(memo.split()) or "Unknown Payee"
 
@@ -159,6 +194,7 @@ class _Entity:
     display: str = ""  # human-readable label, fixed at creation (issue #25)
     tokens: set[str] = field(default_factory=set)  # union of significant tokens
     members: list[list[str]] = field(default_factory=list)  # per-memo token lists
+    degraded: int = 0  # sub-lock variants absorbed so far (snowball cap, issue #39)
 
     def absorb(self, tokens: list[str]) -> None:
         self.tokens.update(tokens)
@@ -214,7 +250,12 @@ class PayeeResolver:
         is appended — a same-label collision would false-merge them at the mapping
         layer, since the display is the mapping's real value (issue #25).
         """
-        base = display_label(memo)
+        # Consult online document frequency so the statement's boilerplate tail
+        # (high-DF filler) is dropped from the label, leaving the brand tokens
+        # (issue #39). A memo that is *only* boilerplate has no brand token, so it
+        # falls back to an id-derived label ("Payee 7") — a neutral placeholder the
+        # human can rename, never a misleading boilerplate string.
+        base = display_label(memo, self._is_generic, fallback=f"Payee {eid}")
         label = base
         while label in self._claimed:
             label = f"{base} ({eid})"
@@ -334,10 +375,21 @@ class PayeeResolver:
         matches.sort(key=lambda m: m[0], reverse=True)
         best_score = matches[0][0]
         target = matches[0][1]
+        # A degraded (over-grown shared-token) merge counts against the snowball
+        # cap, so a runaway entity eventually seals itself (issue #39). Measured
+        # before absorbing this memo's tokens, so the memo does not inflate its own
+        # over-grown check. Fuzzy 0.90 matches into a small entity are not degraded.
+        if (
+            best_score == _DEGRADED_LOCK
+            and self._discriminative(set(tokens)) & self._discriminative(target.tokens)
+            and len(self._discriminative(target.tokens)) > _ANCHOR_TOKEN_CAP
+        ):
+            target.degraded += 1
         target.absorb(tokens)
         for _, other in matches[1:]:
             target.tokens.update(other.tokens)
             target.members.extend(other.members)
+            target.degraded += other.degraded  # carry the snowball count across folds
             self._entities.remove(other)
         return target.id, best_score, False
 
@@ -386,6 +438,12 @@ class PayeeResolver:
         shared = self._discriminative(token_set) & self._discriminative(ent.tokens)
         if shared:
             if len(self._discriminative(ent.tokens)) > _ANCHOR_TOKEN_CAP:
+                # A runaway snowball that has already absorbed its cap of degraded
+                # variants stops being a merge candidate: score below threshold so
+                # the memo mints a fresh entity rather than growing the mega-entity
+                # unboundedly (issue #39). Splitting later is the human's cheap fix.
+                if ent.degraded >= _DEGRADED_VARIANT_CAP:
+                    return 0.0
                 return _DEGRADED_LOCK
             return 1.0
 
