@@ -230,6 +230,23 @@ class PayeeResolver:
 
     def resolve(self, memo: str) -> int:
         """Resolve *memo* to a payee entity id, creating one if none matches."""
+        return self.resolve_scored(memo)[0]
+
+    def resolve_scored(self, memo: str) -> tuple[int, float, bool]:
+        """Resolve *memo*, also reporting how the decision was made.
+
+        Returns ``(entity_id, confidence, created)``:
+
+          * ``entity_id`` — the stable id, exactly as :meth:`resolve`.
+          * ``confidence`` — the score of the winning match when *memo* joined an
+            existing entity (``1.0`` for a deterministic shared-token lock, lower
+            for a fuzzy prefix/acronym/typo merge). When a fresh entity is
+            created there is no grouping decision to doubt, so it is ``1.0``.
+          * ``created`` — ``True`` iff a brand-new entity was minted.
+
+        This is the seam the persistent review flow (story S1.1) reads: a fuzzy
+        merge (confidence below the review threshold) is what ingest flags for a
+        human to confirm."""
         tokens = normalize(memo)
         if not tokens:
             # No significant tokens survived (pure filler like an autopay note):
@@ -249,7 +266,7 @@ class PayeeResolver:
             ent.display = self._claim_display(ent.id, memo)
             ent.absorb(tokens)
             self._entities.append(ent)
-            return ent.id
+            return ent.id, 1.0, True
 
         # Join the best match, and fold in every other above-threshold entity:
         # a memo that independently matches two existing entities is fresh
@@ -257,13 +274,14 @@ class PayeeResolver:
         # resolution robust to the order memos arrive in). Sub-threshold entities
         # are untouched — no silent merges.
         matches.sort(key=lambda m: m[0], reverse=True)
+        best_score = matches[0][0]
         target = matches[0][1]
         target.absorb(tokens)
         for _, other in matches[1:]:
             target.tokens.update(other.tokens)
             target.members.extend(other.members)
             self._entities.remove(other)
-        return target.id
+        return target.id, best_score, False
 
     # -- scoring ---------------------------------------------------------- #
     def _confidence(self, tokens: list[str], ent: _Entity) -> float:

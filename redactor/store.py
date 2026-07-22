@@ -38,7 +38,7 @@ except ImportError as exc:  # pragma: no cover
 
 # Bump when a migration is added; keep _MIGRATIONS in step (index i migrates
 # user_version i -> i+1).
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 PathLike = str | os.PathLike
 
@@ -182,12 +182,118 @@ class MappingTable:
         self._conn.commit()
 
     def resolve_alias(self, alias_token: str) -> Sealed | None:
-        """Return the real value for an alias token, sealed, or ``None``."""
+        """Return the real value for an alias token, sealed, or ``None``.
+
+        Follows the merge redirect (``merged_into``): a loser token folded into a
+        winner by :meth:`set_merged_into` resolves to the *winner's* real value,
+        so an already-issued alias keeps un-redacting correctly after a payee
+        merge (story S1.1) — alias stability across a merge, never a dangling
+        token. A defensive cycle guard keeps a corrupt chain from looping.
+        """
+        seen: set[str] = set()
+        token = alias_token
+        while True:
+            row = self._conn.execute(
+                "SELECT real_value, merged_into FROM alias_mapping WHERE alias_token = ?",
+                (token,),
+            ).fetchone()
+            if row is None:
+                return None
+            real_value, merged_into = row
+            if merged_into is None or merged_into in seen:
+                return Sealed(real_value)
+            seen.add(token)
+            token = merged_into
+
+    def canonical_head(self, alias_token: str) -> str | None:
+        """The canonical (un-merged) token *alias_token* folds into, or ``None``.
+
+        Walks the ``merged_into`` chain to the entity that actually holds the
+        real value. A token that was never merged is its own head."""
+        seen: set[str] = set()
+        token = alias_token
+        while True:
+            row = self._conn.execute(
+                "SELECT merged_into FROM alias_mapping WHERE alias_token = ?",
+                (token,),
+            ).fetchone()
+            if row is None:
+                return None
+            merged_into = row[0]
+            if merged_into is None or merged_into in seen:
+                return token
+            seen.add(token)
+            token = merged_into
+
+    def merged_into(self, alias_token: str) -> str | None:
+        """The token *alias_token* was directly merged into, or ``None``."""
+        row = self._conn.execute(
+            "SELECT merged_into FROM alias_mapping WHERE alias_token = ?",
+            (alias_token,),
+        ).fetchone()
+        return None if row is None else row[0]
+
+    def set_merged_into(self, loser: str, winner: str) -> None:
+        """Fold *loser* into *winner* (story S1.1 merge): the loser keeps its own
+        token — never renumbered — but now resolves to the winner's real value."""
+        self._conn.execute(
+            "UPDATE alias_mapping SET merged_into = ? WHERE alias_token = ?",
+            (winner, loser),
+        )
+        self._conn.commit()
+
+    def clear_merged_into(self, alias_token: str) -> None:
+        """Un-fold *alias_token* (story S1.1 split): it becomes its own entity
+        again, resolving to its own real value."""
+        self._conn.execute(
+            "UPDATE alias_mapping SET merged_into = NULL WHERE alias_token = ?",
+            (alias_token,),
+        )
+        self._conn.commit()
+
+    def rename_value(self, alias_token: str, real_value: str) -> None:
+        """Change an entity's real value (story S1.1 rename), token unchanged.
+
+        Raises ``ValueError`` if *alias_token* is unknown, or if *real_value* is
+        already bound to a different entity of the same class — that collision
+        would be a merge, not a rename (the mapping keys on the real value), so
+        it is refused rather than silently coalescing two payees.
+        """
+        row = self._conn.execute(
+            "SELECT entity_type FROM alias_mapping WHERE alias_token = ?",
+            (alias_token,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown alias token: {alias_token!r}")
+        try:
+            self._conn.execute(
+                "UPDATE alias_mapping SET real_value = ? WHERE alias_token = ?",
+                (real_value, alias_token),
+            )
+        except _sqlcipher.IntegrityError as exc:
+            self._conn.rollback()
+            raise ValueError(
+                f"cannot rename {alias_token}: that label is already used by "
+                f"another entity (use merge to combine them)"
+            ) from exc
+        self._conn.commit()
+
+    def real_value_of(self, alias_token: str) -> Sealed | None:
+        """This token's *own* real value (not following any merge), sealed."""
         row = self._conn.execute(
             "SELECT real_value FROM alias_mapping WHERE alias_token = ?",
             (alias_token,),
         ).fetchone()
         return None if row is None else Sealed(row[0])
+
+    def canonical_tokens(self, entity_type: str) -> list[str]:
+        """Every un-merged (canonical) token of a class — the review entities."""
+        return [r[0] for r in self._conn.execute(
+            "SELECT alias_token FROM alias_mapping "
+            "WHERE entity_type = ? AND merged_into IS NULL "
+            "ORDER BY alias_token",
+            (entity_type.upper(),),
+        )]
 
     def resolve_token(self, entity_type: str, real_value: str) -> str | None:
         """Return the alias token for a real value, or ``None``. The alias token
@@ -263,6 +369,79 @@ class Store:
         for row in cur.fetchall():
             yield dict(zip(cols, row, strict=True))
 
+    # -- payee entity resolution (artifact 2 support, story S1.1) -------------
+    #
+    # The variant table records, per distinct memo string, which PAYEE entity it
+    # was resolved onto and with what confidence. It holds real memo strings, so
+    # it lives here in the encrypted store and never leaves it (like the mapping
+    # itself). It is what the review flow counts variants and confidence from,
+    # and what makes resolution stable across sessions: a known variant reuses
+    # its recorded token instead of being re-guessed.
+
+    def add_payee_variant(self, variant: str, alias_token: str, confidence: float) -> None:
+        """Record a memo *variant* under a PAYEE token, first assignment wins.
+
+        Idempotent: re-recording the same variant leaves its original token and
+        confidence untouched (stability). Regrouping is an explicit mutation
+        (:meth:`reassign_payee_variant`), never a silent side effect of ingest."""
+        self._conn.execute(
+            "INSERT INTO payee_variant (variant, alias_token, confidence, recorded_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(variant) DO NOTHING",
+            (variant, alias_token, confidence, _utcnow_iso()),
+        )
+        self._conn.commit()
+
+    def payee_variant(self, variant: str) -> tuple[str, float] | None:
+        """The (token, confidence) a memo *variant* is recorded under, or ``None``."""
+        row = self._conn.execute(
+            "SELECT alias_token, confidence FROM payee_variant WHERE variant = ?",
+            (variant,),
+        ).fetchone()
+        return None if row is None else (row[0], row[1])
+
+    def payee_variants(self) -> list[tuple[str, str, float]]:
+        """Every recorded ``(variant, token, confidence)``, in insertion order.
+
+        Insertion order reproduces the original grouping order, so a fresh
+        session can reseed the resolver deterministically."""
+        return [
+            (r[0], r[1], r[2])
+            for r in self._conn.execute(
+                "SELECT variant, alias_token, confidence FROM payee_variant ORDER BY id"
+            )
+        ]
+
+    def reassign_payee_variant(self, variant: str, alias_token: str) -> None:
+        """Move a memo *variant* onto a different PAYEE token (split regrouping)."""
+        self._conn.execute(
+            "UPDATE payee_variant SET alias_token = ? WHERE variant = ?",
+            (alias_token, variant),
+        )
+        self._conn.commit()
+
+    def add_payee_journal(
+        self, op: str, *, winner: str | None = None, loser: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Append an auditable payee-mutation record (merge / split / rename).
+
+        Alias-space by construction: it records the *tokens* involved and the
+        operation, never a raw memo or real display value."""
+        self._conn.execute(
+            "INSERT INTO payee_journal (op, winner, loser, note, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (op, winner, loser, note, _utcnow_iso()),
+        )
+        self._conn.commit()
+
+    def payee_journal(self) -> list[dict]:
+        """The payee-mutation journal, oldest first (auditable history)."""
+        cur = self._conn.execute(
+            "SELECT id, op, winner, loser, note, recorded_at FROM payee_journal ORDER BY id"
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+
     # -- lifecycle ------------------------------------------------------------
 
     def migrate(self) -> None:
@@ -335,7 +514,42 @@ def _migrate_1_to_2(conn) -> None:
     )
 
 
-_MIGRATIONS = [_migrate_0_to_1, _migrate_1_to_2]
+def _migrate_2_to_3(conn) -> None:
+    # Story S1.1 — entity-resolution review flow.
+    #
+    #  * alias_mapping.merged_into: a payee merge folds a loser token into a
+    #    winner without renumbering (alias stability). NULL = canonical entity.
+    #  * payee_variant: per-memo grouping + confidence — what review counts and
+    #    what makes resolution stable across sessions (real memo strings, so it
+    #    stays in the encrypted store, never serialized off-machine).
+    #  * payee_journal: an auditable log of every merge / split / rename. Records
+    #    tokens and the operation only — alias-space, no real value.
+    conn.executescript(
+        """
+        ALTER TABLE alias_mapping ADD COLUMN merged_into TEXT;
+
+        CREATE TABLE payee_variant (
+            id          INTEGER PRIMARY KEY,
+            variant     TEXT NOT NULL UNIQUE,
+            alias_token TEXT NOT NULL,
+            confidence  REAL NOT NULL,
+            recorded_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_payee_variant_token ON payee_variant (alias_token);
+
+        CREATE TABLE payee_journal (
+            id          INTEGER PRIMARY KEY,
+            op          TEXT NOT NULL,
+            winner      TEXT,
+            loser       TEXT,
+            note        TEXT,
+            recorded_at TEXT NOT NULL
+        );
+        """
+    )
+
+
+_MIGRATIONS = [_migrate_0_to_1, _migrate_1_to_2, _migrate_2_to_3]
 
 
 # -- open ---------------------------------------------------------------------

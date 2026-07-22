@@ -39,6 +39,7 @@ from redactor.ingest import ingest_statement
 from redactor.lens import lens, resolver_from_table
 from redactor.lint import format_findings, lint_file
 from redactor.loaders import LoadError, load_statement_file
+from redactor.payees import PayeeRegistry
 from redactor.projection import AliasSpaceProjection
 from redactor.store import BadKeyError, StoreError, open_store
 
@@ -303,13 +304,18 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
         print(f"redactor ingest: cannot open store: {exc}", file=sys.stderr)
         return 1
 
+    # One registry for the whole batch: it seeds from the store once and groups
+    # payee variants across every file, so low-confidence groupings are surfaced
+    # coherently at the end (story S1.1).
+    registry = PayeeRegistry(store)
+
     failures = 0
     try:
         for raw_path in args.files:
             before = set(store.mapping.tokens())
             try:
                 statement = load_statement_file(raw_path, column_map=column_map or None)
-                records = ingest_statement(store, statement)
+                records = ingest_statement(store, statement, registry=registry)
             except LoadError as exc:
                 failures += 1
                 # Value-free by default; the offending cell only behind --show-raw.
@@ -331,10 +337,127 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
                 f"{new_payees} new payees, {new_aliases} aliases issued, "
                 f"lint: {verdict}"
             )
+
+        # Flag low-confidence payee groupings for review (story S1.1). This is
+        # alias-space only — tokens and a confidence number, never a raw memo or
+        # display label — so it is safe to copy-paste. The human resolves them
+        # locally with `redactor payees --review`.
+        flagged = registry.flagged()
+        if flagged:
+            print(
+                f"review: {len(flagged)} low-confidence payee grouping(s) flagged "
+                f"— run `redactor payees --review` to confirm:"
+            )
+            for token, confidence in flagged:
+                print(f"  {token}: confidence {confidence:.2f}")
     finally:
         store.close()
 
     return 1 if failures else 0
+
+
+def _cmd_payees(args: argparse.Namespace) -> int:
+    """The entity-resolution review flow (story S1.1).
+
+    ``--review`` is a **local render**: like ``lens`` it reveals real values
+    (display labels), so it opens the store with ``create=False`` and refuses
+    when no decryptable mapping table is present. ``--merge`` / ``--split`` /
+    ``--rename`` mutate groupings and labels and print an **alias-space**
+    confirmation only — tokens and counts, never a raw memo or display value.
+    Every mutation is journaled in the store.
+    """
+    try:
+        key = _resolve_key(args)
+    except keychain.KeychainUnavailable as exc:
+        print(f"redactor payees: {exc}", file=sys.stderr)
+        return 2
+    if not key:
+        print(
+            f"redactor payees: an encryption key is required "
+            f"(pass --key, set ${KEY_ENV}, or `redactor init`); the mapping "
+            f"table is never plaintext.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # create=False is the teeth (as for `lens`): review reveals real values, so
+    # it must run only where the mapping table actually lives.
+    try:
+        store = open_store(args.store, key, create=False)
+    except BadKeyError:
+        print(
+            f"redactor payees: the key does not decrypt {args.store} "
+            f"(wrong key or corrupt file).",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as exc:
+        print(f"redactor payees: cannot open store: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        registry = PayeeRegistry(store)
+        if args.merge is not None:
+            return _payees_merge(registry, args.merge)
+        if args.split is not None:
+            return _payees_split(registry, args.split)
+        if args.rename is not None:
+            return _payees_rename(registry, args.rename)
+        return _payees_review(registry)
+    finally:
+        store.close()
+
+
+def _payees_review(registry: PayeeRegistry) -> int:
+    """Render the entity list — the local render boundary (reveals labels)."""
+    entities = registry.review()
+    if not entities:
+        print("redactor payees: no payee entities resolved yet.")
+        return 0
+    print(f"redactor payees: {len(entities)} payee entit(y/ies):")
+    for e in entities:
+        flag = "  [REVIEW]" if e.low_confidence else ""
+        # The display label is a real value: this line is for the local terminal
+        # on the machine holding the mapping table only.
+        print(
+            f"  {e.token}  variants={e.variant_count}  "
+            f"confidence={e.confidence:.2f}{flag}  {e.display}"
+        )
+    return 0
+
+
+def _payees_merge(registry: PayeeRegistry, pair: list[str]) -> int:
+    winner, loser = pair
+    try:
+        registry.merge(winner, loser)
+    except ValueError as exc:
+        print(f"redactor payees: cannot merge: {exc}", file=sys.stderr)
+        return 1
+    # Alias-space confirmation only.
+    print(f"redactor payees: merged {loser} into {winner} (aliases preserved).")
+    return 0
+
+
+def _payees_split(registry: PayeeRegistry, token: str) -> int:
+    try:
+        registry.split(token)
+    except ValueError as exc:
+        print(f"redactor payees: cannot split: {exc}", file=sys.stderr)
+        return 1
+    print(f"redactor payees: split {token} back into its own entity.")
+    return 0
+
+
+def _payees_rename(registry: PayeeRegistry, spec: list[str]) -> int:
+    token, label = spec
+    try:
+        registry.rename(token, label)
+    except ValueError as exc:
+        print(f"redactor payees: cannot rename: {exc}", file=sys.stderr)
+        return 1
+    # Alias-space: name the token, not the new label (which is a real value).
+    print(f"redactor payees: renamed {token}.")
+    return 0
 
 
 def _basename(path: str) -> str:
@@ -491,6 +614,58 @@ def build_parser() -> argparse.ArgumentParser:
         "default so error output is safe to copy-paste.",
     )
     ingest_p.set_defaults(func=_cmd_ingest)
+
+    payees_p = sub.add_parser(
+        "payees",
+        help="Review and fix payee entity groupings (merge / split / rename); "
+        "runs only where the mapping table lives.",
+        description=(
+            "Entity-resolution review flow (story S1.1). --review lists the "
+            "resolved payee entities with variant counts, confidence, and "
+            "display labels (a local render, like `lens`, that reveals real "
+            "values). --merge/--split/--rename fix groupings and labels while "
+            "preserving alias stability (a merge aliases the loser to the "
+            "winner and never renumbers); every mutation is journaled. Mutation "
+            "output is alias-space only."
+        ),
+    )
+    payees_p.add_argument(
+        "--store",
+        required=True,
+        metavar="PATH",
+        help="Path to the local encrypted store holding the mapping table.",
+    )
+    payees_p.add_argument(
+        "--key",
+        default=None,
+        help=f"Key override (CI/tests). Defaults to ${KEY_ENV}, else the OS keychain.",
+    )
+    action = payees_p.add_mutually_exclusive_group()
+    action.add_argument(
+        "--review",
+        action="store_true",
+        help="List resolved payee entities (default). Reveals display labels; "
+        "local render only.",
+    )
+    action.add_argument(
+        "--merge",
+        nargs=2,
+        metavar=("WINNER", "LOSER"),
+        help="Fold the LOSER payee token into WINNER. The loser keeps its token "
+        "and now resolves to the winner (alias stability preserved).",
+    )
+    action.add_argument(
+        "--split",
+        metavar="TOKEN",
+        help="Un-merge a previously merged TOKEN back into its own entity.",
+    )
+    action.add_argument(
+        "--rename",
+        nargs=2,
+        metavar=("TOKEN", "LABEL"),
+        help="Change TOKEN's display label to LABEL (real value; stays local).",
+    )
+    payees_p.set_defaults(func=_cmd_payees)
     return parser
 
 
