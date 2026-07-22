@@ -19,6 +19,7 @@ import os
 import sys
 
 from redactor.lens import lens, resolver_from_table
+from redactor.lint import format_findings, lint_file
 from redactor.store import StoreError, open_store
 
 # Env var checked when --key is not passed, so the passphrase need not appear in
@@ -62,6 +63,28 @@ def _cmd_lens(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lint(args: argparse.Namespace) -> int:
+    """Detection-based leak-lint of an alias-space artifact (story S0.2).
+
+    Needs no key and no store: it scans text and structure for real-looking
+    identifiers, knowing only the *shapes* a real identifier takes — never a
+    mapping-table binding. Exit 0 = clean, 1 = findings. Findings echo the
+    offending substrings (that is the point of a lint), so they go to stderr and
+    stay on the local render surface; stdout carries only the clean verdict.
+    """
+    try:
+        findings = lint_file(args.file)
+    except OSError as exc:
+        print(f"redactor lint: cannot read {args.file}: {exc}", file=sys.stderr)
+        return 2
+
+    if findings:
+        print(format_findings(findings), file=sys.stderr)
+        return 1
+    print(format_findings(findings))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="redactor",
@@ -101,6 +124,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print a count of substituted tokens to stderr.",
     )
     lens_p.set_defaults(func=_cmd_lens)
+
+    lint_p = sub.add_parser(
+        "lint",
+        help="Detection-based leak-lint: fail if an alias-space artifact carries "
+        "any real-looking identifier.",
+        description=(
+            "Scan a file for real-looking identifiers (checksum-valid routing / "
+            "card numbers, SSNs, account-id patterns) and for alias-contract "
+            "conformance (identifying fields must be canonical tokens). Zero "
+            "findings = clean (exit 0); any finding exits 1. Needs no key or "
+            "store — it reads only text, never the mapping table."
+        ),
+    )
+    lint_p.add_argument(
+        "file",
+        metavar="FILE",
+        help="Path to the alias-space artifact (projection JSON, report, ...) to lint.",
+    )
+    lint_p.set_defaults(func=_cmd_lint)
     return parser
 
 
