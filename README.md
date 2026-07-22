@@ -106,6 +106,15 @@ review: 1 low-confidence payee grouping(s) flagged — run `redactor payees --re
   PAYEE-3: confidence 0.90
 ```
 
+As a coarser backstop, ingest also runs a payee-per-row sanity check. If a large
+statement resolves to implausibly few payees — the signature of an
+entity-resolution collapse — it prints a loud warning (alias-space: counts and a
+ratio, never a memo):
+
+```console
+redactor: WARNING — payee collapse suspected: only 1 distinct payee(s) for 9717 rows (ratio 0.0001). Entity resolution may have over-merged; run `redactor payees --review` before trusting this ingest.
+```
+
 ## Reviewing payee groupings (`redactor payees`)
 
 Real memo garbage produces some wrong groupings and unlovely display labels.

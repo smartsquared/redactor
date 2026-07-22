@@ -12,7 +12,12 @@ The resolver is deliberately layered, cheapest-and-safest first:
 1. **Deterministic normalization.** Strip the non-identifying noise — store
    numbers, cities, US state codes, dates, and generic transaction filler —
    down to the discriminative *significant tokens*. Two memos that share a
-   significant token (e.g. ``COSTCO``) resolve together with full confidence.
+   *discriminative* significant token (e.g. ``COSTCO``) resolve together with
+   full confidence. Sharing a token that recurs across many distinct memos —
+   generic vocabulary the stopword list does not enumerate (``VISA``, ``POS``,
+   a big-city name) — is **not** a lock: document frequency, learned online,
+   demotes such tokens so they can never snowball distinct merchants into one
+   entity at real scale (issue #37).
 2. **Fuzzy layer, behind a confidence threshold.** For the leftovers where the
    brand itself was mangled (``WHOLEFDS`` vs ``WHOLE FOODS``, ``WF`` vs
    ``WHOLE FOODS``), score prefix / acronym / character similarity and merge
