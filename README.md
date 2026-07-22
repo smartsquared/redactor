@@ -97,6 +97,49 @@ A bad file fails on its own and never aborts the batch — the good files still
 ingest. Re-ingesting is safe: aliases are stable, so a second pass issues zero
 new ones.
 
+When a memo variant groups onto an existing payee by a *fuzzy* match rather than
+a shared token, ingest flags that grouping for review (alias-space — a token and
+a confidence number, never a memo):
+
+```console
+review: 1 low-confidence payee grouping(s) flagged — run `redactor payees --review` to confirm:
+  PAYEE-3: confidence 0.90
+```
+
+## Reviewing payee groupings (`redactor payees`)
+
+Real memo garbage produces some wrong groupings and unlovely display labels.
+`redactor payees --review` lists the resolved payee entities — variant count,
+confidence, and the display label. Like `lens`, it **reveals real values**, so it
+runs only on the machine that holds the mapping table:
+
+```console
+$ redactor payees --review --store ~/.redactor/store.db
+redactor payees: 16 payee entit(y/ies):
+  PAYEE-3   variants=3  confidence=0.90  [REVIEW]  Wholefds
+  PAYEE-10  variants=1  confidence=1.00            Wf
+  ...
+```
+
+Fix a grouping or a label with `--merge` / `--split` / `--rename`. Alias
+stability is preserved — a merge **aliases the loser to the winner and never
+renumbers**, so records already emitted under either token keep un-redacting
+correctly — and every mutation is journaled in the store:
+
+```console
+$ redactor payees --merge PAYEE-3 PAYEE-10 --store ~/.redactor/store.db
+redactor payees: merged PAYEE-10 into PAYEE-3 (aliases preserved).
+
+$ redactor payees --rename PAYEE-3 "Whole Foods Market" --store ~/.redactor/store.db
+redactor payees: renamed PAYEE-3.
+
+$ redactor payees --split PAYEE-10 --store ~/.redactor/store.db   # undo the merge
+redactor payees: split PAYEE-10 back into its own entity.
+```
+
+Mutation output is **alias-space only** (it names tokens, never the memo or the
+new label). After a merge, both tokens lens to the winner's real value.
+
 ## The sanitized-context API
 
 The contract the first consumer (`sakuma-finance`) speaks to hold a conversation
