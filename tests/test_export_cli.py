@@ -65,17 +65,20 @@ def test_export_writes_attested_projection_for_month(tmp_path, capsys):
     assert "provenance" in envelope, "the file must carry a provenance attestation block"
 
     prov = envelope["provenance"]
-    assert prov["verdict"] == "green"
+    assert prov["status"] == "green"
+    assert prov["tool"] == "redactor"
+    assert prov["check"] == "lint"
     assert prov["linter_version"] == LINTER_VERSION
     assert isinstance(prov.get("timestamp"), str) and prov["timestamp"]
-    assert isinstance(prov.get("linter"), str) and prov["linter"]
 
 
 def test_export_provenance_shape_is_the_cross_repo_contract(tmp_path, capsys):
     """Lock the provenance block shape so the m02 seam can't drift.
 
-    Must match sakuma_finance.records_import.read_attestation: verdict, timestamp,
-    linter version (see docs/sanitized-context-api.md §Export provenance)."""
+    The CONSUMER owns this contract — sakuma_finance.records_import.LintAttestation
+    requires tool == "redactor", check == "lint", status == "green" (leak_count
+    optional); extras are ignored by its from_dict. Pin the required keys exactly
+    (see docs/sanitized-context-api.md §Export provenance)."""
     db = tmp_path / "store.db"
     _ingest_may(db)
     capsys.readouterr()
@@ -83,7 +86,13 @@ def test_export_provenance_shape_is_the_cross_repo_contract(tmp_path, capsys):
     out = tmp_path / "proj.json"
     main(["export", "--store", str(db), "--key", KEY, "--month", "2026-05", "--out", str(out)])
     prov = json.loads(out.read_text(encoding="utf-8"))["provenance"]
-    assert set(prov) == {"verdict", "timestamp", "linter", "linter_version"}
+    # The consumer's required keys, with the consumer's required values:
+    assert prov["tool"] == "redactor"
+    assert prov["check"] == "lint"
+    assert prov["status"] == "green"
+    assert prov["leak_count"] == 0
+    # Producer extras must not displace required keys:
+    assert {"tool", "check", "status", "leak_count"} <= set(prov)
 
 
 def test_export_file_is_alias_space_only(tmp_path, capsys):
@@ -219,4 +228,4 @@ def test_export_rows_without_institution_lint_green_with_null_institution(tmp_pa
     assert rc == 0, "missing institution is unknown, not a leak — export must be green"
     data = json.loads(out.read_text())
     assert data["records"][0]["institution"] is None
-    assert data["provenance"]["verdict"] == "green"
+    assert data["provenance"]["status"] == "green"

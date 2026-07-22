@@ -192,7 +192,10 @@ The written file is the alias-space projection envelope
   "version": 1,
   "records": [ ... ],
   "provenance": {
-    "verdict": "green",
+    "tool": "redactor",
+    "check": "lint",
+    "status": "green",
+    "leak_count": 0,
     "timestamp": "2026-07-22T17:04:33.512+00:00",
     "linter": "redactor.lint",
     "linter_version": 1
@@ -200,15 +203,21 @@ The written file is the alias-space projection envelope
 }
 ```
 
-**This `provenance` block is a cross-repo contract.** Its shape must stay in step
-with sakuma-finance's `records_import.read_attestation` (`LintAttestation`):
+**This `provenance` block is a cross-repo contract, and the CONSUMER owns it.**
+sakuma-finance's `records_import.LintAttestation.is_green` requires exactly
+`tool == "redactor"`, `check == "lint"`, `status == "green"`; `leak_count` is
+carried for its records. Extra keys are ignored by its `from_dict` — the
+producer's `timestamp` / `linter` / `linter_version` ride along as extras:
 
-| Field            | Type   | Meaning                                                       |
-|------------------|--------|--------------------------------------------------------------|
-| `verdict`        | `str`  | Always `"green"` in a written file (red is never written).   |
-| `timestamp`      | `str`  | ISO-8601 UTC instant the attestation was stamped.            |
-| `linter`         | `str`  | The linter identity (`redactor.lint`).                       |
-| `linter_version` | `int`  | `redactor.export.LINTER_VERSION` — the attestation contract version. |
+| Field            | Type   | Owner    | Meaning                                                    |
+|------------------|--------|----------|-----------------------------------------------------------|
+| `tool`           | `str`  | consumer | Must be `"redactor"`.                                      |
+| `check`          | `str`  | consumer | Must be `"lint"`.                                          |
+| `status`         | `str`  | consumer | Always `"green"` in a written file (red is never written). |
+| `leak_count`     | `int`  | consumer | `0` in a written file.                                     |
+| `timestamp`      | `str`  | producer | ISO-8601 UTC instant the attestation was stamped.          |
+| `linter`         | `str`  | producer | The linter identity (`redactor.lint`).                     |
+| `linter_version` | `int`  | producer | `redactor.export.LINTER_VERSION` — bump on shape change.   |
 
 Only a green file is ever written, so a consumer that finds a `provenance` block
 with `verdict == "green"` and a `linter_version` it understands may trust the

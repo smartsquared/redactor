@@ -40,11 +40,14 @@ from pathlib import Path
 from redactor.lint import LintFinding, lint_projection
 from redactor.projection import AliasRecord, AliasSpaceProjection
 
-# The linter identity stamped into the provenance block. ``LINTER_VERSION`` is
-# the cross-repo attestation contract version: bump it (and the note in
-# docs/sanitized-context-api.md) on any change to the provenance block shape, so
-# sakuma-finance's ``records_import.read_attestation`` and this producer can never
-# silently drift.
+# The attestation identity stamped into the provenance block. The CONSUMER owns
+# this contract: sakuma_finance.records_import.LintAttestation.is_green demands
+# tool == "redactor", check == "lint", status == "green" — these constants must
+# mirror those, and the shape-lock test pins the consumer's keys, not ours.
+# ``LINTER_VERSION`` rides along as an extra key (consumers ignore extras); bump
+# it (and docs/sanitized-context-api.md) on any shape change.
+ATTESTATION_TOOL = "redactor"
+ATTESTATION_CHECK = "lint"
 LINTER_NAME = "redactor.lint"
 LINTER_VERSION = 1
 
@@ -163,7 +166,12 @@ def _attestation(verdict: str, *, now: datetime | None = None) -> dict:
     docs/sanitized-context-api.md; keep the two in step via ``LINTER_VERSION``."""
     stamp = (now or datetime.now(UTC)).isoformat()
     return {
-        "verdict": verdict,
+        # The consumer's required keys (sakuma_finance records_import contract):
+        "tool": ATTESTATION_TOOL,
+        "check": ATTESTATION_CHECK,
+        "status": verdict,
+        "leak_count": 0,
+        # Producer extras (ignored by the consumer's from_dict):
         "timestamp": stamp,
         "linter": LINTER_NAME,
         "linter_version": LINTER_VERSION,
