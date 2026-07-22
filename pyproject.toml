@@ -18,6 +18,10 @@ authors = [{ name = "smartsquared" }]
 dependencies = [
     "sqlcipher3>=0.5",
     "presidio-analyzer>=2.2",
+    # OS-keychain key custody (ADR-0001 "Key custody", story S0.1). The seam is
+    # redactor/keychain.py; macOS Keychain is the first backend. Tests inject an
+    # in-memory fake, so this is exercised only on a real user machine.
+    "keyring>=24",
 ]
 
 [project.optional-dependencies]
