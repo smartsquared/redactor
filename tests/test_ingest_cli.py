@@ -10,11 +10,33 @@ batch; the offending cell appears only behind ``--show-raw``.
 """
 from __future__ import annotations
 
+import pytest
+
+from redactor import keychain
 from redactor.cli import main
 from redactor.fixtures import FIXTURES_DIR, load_manifest
 from redactor.store import open_store
 
 KEY = "correct horse battery staple"
+
+
+class _FakeKeyring:
+    """An empty in-memory keychain: custodies nothing, so get_key is None."""
+
+    def get_password(self, service, account):
+        return None
+
+    def set_password(self, service, account, password):  # pragma: no cover
+        pass
+
+    def delete_password(self, service, account):  # pragma: no cover
+        pass
+
+
+@pytest.fixture
+def empty_keychain(monkeypatch):
+    monkeypatch.setattr(keychain, "_default_backend", lambda: _FakeKeyring())
+    monkeypatch.delenv("REDACTOR_KEY", raising=False)
 CHECKING_CSV = FIXTURES_DIR / "checking_2026-04.csv"
 CREDIT_OFX = FIXTURES_DIR / "credit_2026-04.ofx"
 
@@ -116,8 +138,8 @@ def test_show_raw_reveals_offending_value(tmp_path, capsys):
     assert "SEKRET-AMOUNT-9" in (captured.out + captured.err)
 
 
-def test_ingest_requires_a_key(tmp_path, capsys, monkeypatch):
-    monkeypatch.delenv("REDACTOR_KEY", raising=False)
+def test_ingest_requires_a_key(tmp_path, capsys, empty_keychain):
+    # No --key, no $REDACTOR_KEY, nothing custodied -> actionable value-free exit.
     db = tmp_path / "store.db"
     rc = main(["ingest", str(CHECKING_CSV), "--store", str(db)])
     assert rc == 2
