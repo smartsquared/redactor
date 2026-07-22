@@ -38,7 +38,7 @@ except ImportError as exc:  # pragma: no cover
 
 # Bump when a migration is added; keep _MIGRATIONS in step (index i migrates
 # user_version i -> i+1).
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 PathLike = str | os.PathLike
 
@@ -349,13 +349,19 @@ class Store:
         raw_memo: str | None = None,
         currency: str = "USD",
         source_file: str | None = None,
+        institution: str | None = None,
     ) -> int:
+        # ``institution`` is the account's institution name (a real value, so it
+        # lives only here in the encrypted store). It records the account ->
+        # institution link that ``redactor export`` needs to reconstruct a
+        # projection's INST token later, offline, from the store alone — the raw
+        # rows otherwise carry no institution (issue #41).
         cur = self._conn.execute(
             "INSERT INTO raw_transactions "
             "(account_id, posted_date, amount_cents, currency, raw_payee, raw_memo, "
-            " source_file, ingested_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " source_file, institution, ingested_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (account_id, posted_date, amount_cents, currency, raw_payee, raw_memo,
-             source_file, _utcnow_iso()),
+             source_file, institution, _utcnow_iso()),
         )
         self._conn.commit()
         return cur.lastrowid
@@ -363,7 +369,7 @@ class Store:
     def raw_transactions(self) -> Iterator[dict]:
         cur = self._conn.execute(
             "SELECT id, account_id, posted_date, amount_cents, currency, raw_payee, "
-            "raw_memo, source_file, ingested_at FROM raw_transactions ORDER BY id"
+            "raw_memo, source_file, institution, ingested_at FROM raw_transactions ORDER BY id"
         )
         cols = [c[0] for c in cur.description]
         for row in cur.fetchall():
@@ -549,7 +555,19 @@ def _migrate_2_to_3(conn) -> None:
     )
 
 
-_MIGRATIONS = [_migrate_0_to_1, _migrate_1_to_2, _migrate_2_to_3]
+def _migrate_3_to_4(conn) -> None:
+    # Issue #41 — `redactor export` reconstructs a month's alias-space projection
+    # from the store alone. The projection's INST token per row needs the account
+    # -> institution link, which the raw rows did not persist. Add it here. Old
+    # rows keep NULL (they predate export); re-ingest populates it.
+    conn.executescript(
+        """
+        ALTER TABLE raw_transactions ADD COLUMN institution TEXT;
+        """
+    )
+
+
+_MIGRATIONS = [_migrate_0_to_1, _migrate_1_to_2, _migrate_2_to_3, _migrate_3_to_4]
 
 
 # -- open ---------------------------------------------------------------------

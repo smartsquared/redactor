@@ -17,6 +17,12 @@ Subcommands:
     that is **alias-space only**: counts and a lint verdict, never a raw memo or
     account id. Parse failures are reported value-free (row + field name); the
     offending cell is shown only behind ``--show-raw``.
+  * ``export`` — the lint-attested projection writer (issue #41). It rebuilds a
+    month's alias-space projection from the store, runs the S0.2 detection lint,
+    and writes the projection file with a ``provenance`` attestation block **only
+    when the lint is green** — the artifact ``sakuma-finance import --projection``
+    consumes. A red projection writes nothing and exits non-zero; the summary
+    (month, row count, verdict) is alias-space only.
 
 Key custody, in priority order, is shared across subcommands (:func:`_resolve_key`):
 ``--key`` > ``$REDACTOR_KEY`` > the OS keychain. The first two are CI/test
@@ -32,8 +38,10 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from redactor import keychain
+from redactor.export import export_month, store_months
 from redactor.fakeness import scan_text
 from redactor.ingest import ingest_statement
 from redactor.lens import lens, resolver_from_table
@@ -400,6 +408,88 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def _export_one(store, month: str, out_path, *, quiet: bool = False) -> int:
+    """Export a single month and print an alias-space summary. Returns 0/1.
+
+    The summary line (month, row count, verdict, and the path written) is
+    alias-space only, so it goes to stdout. A red verdict's findings echo real
+    substrings by necessity (that is the point of a lint), so they go to stderr —
+    the local render surface — and nothing is written."""
+    result = export_month(store, month, out_path)
+    if result.verdict == "green":
+        print(
+            f"{result.month}: {result.row_count} rows, lint: green "
+            f"— wrote {result.path}"
+        )
+        return 0
+    # Red: refuse. Value-free summary to stdout; the offending findings only to
+    # stderr, and only if not suppressed by a batch caller doing its own report.
+    print(
+        f"{result.month}: {result.row_count} rows, lint: red — no file written"
+    )
+    if not quiet:
+        print(
+            f"{_RED}redactor export: {result.month} projection FAILED the "
+            f"leak-lint; refusing to write.{_RESET}\n"
+            f"{format_findings(result.findings)}",
+            file=sys.stderr,
+        )
+    return 1
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Write lint-attested alias-space projection files from the store (issue #41).
+
+    Builds each month's projection from the store, runs the S0.2 detection lint,
+    and writes a provenance-attested file only when the lint is green — the file
+    ``sakuma-finance import --projection`` will consume. Output stays alias-space;
+    a red month writes nothing and forces a non-zero exit."""
+    try:
+        key = _resolve_key(args)
+    except keychain.KeychainUnavailable as exc:
+        print(f"redactor export: {exc}", file=sys.stderr)
+        return 2
+    if not key:
+        print(
+            f"redactor export: an encryption key is required "
+            f"(pass --key, set ${KEY_ENV}, or `redactor init`); the store is "
+            f"never plaintext.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # create=False: export reads an already-ingested store; it never creates one.
+    try:
+        store = open_store(args.store, key, create=False)
+    except BadKeyError:
+        print(
+            f"redactor export: the key does not decrypt {args.store} "
+            f"(wrong key or corrupt file).",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as exc:
+        print(f"redactor export: cannot open store: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        if args.all_months:
+            outdir = Path(args.out)
+            outdir.mkdir(parents=True, exist_ok=True)
+            months = store_months(store)
+            if not months:
+                print("redactor export: no transactions in the store; nothing to export.")
+                return 0
+            failed = 0
+            for month in months:
+                out_path = outdir / f"proj-{month}.json"
+                failed += _export_one(store, month, out_path)
+            return 1 if failed else 0
+        return _export_one(store, args.month, args.out)
+    finally:
+        store.close()
+
+
 def _cmd_payees(args: argparse.Namespace) -> int:
     """The entity-resolution review flow (story S1.1).
 
@@ -658,6 +748,51 @@ def build_parser() -> argparse.ArgumentParser:
         "default so error output is safe to copy-paste.",
     )
     ingest_p.set_defaults(func=_cmd_ingest)
+
+    export_p = sub.add_parser(
+        "export",
+        help="Write a lint-attested alias-space projection file (the artifact "
+        "sakuma-finance import consumes).",
+        description=(
+            "Rebuild a month's alias-space projection from the store, run the "
+            "S0.2 detection lint over it, and — only when the lint is green — "
+            "write it out with a provenance attestation block (verdict, "
+            "timestamp, linter version) that `sakuma-finance import --projection` "
+            "requires. A projection that fails the lint writes nothing, reports "
+            "findings to stderr (local render), and exits non-zero. Summary "
+            "output is alias-space only (month, row count, verdict)."
+        ),
+    )
+    export_p.add_argument(
+        "--store",
+        required=True,
+        metavar="PATH",
+        help="Path to the local encrypted store to export from.",
+    )
+    export_p.add_argument(
+        "--key",
+        default=None,
+        help=f"Key override (CI/tests). Defaults to ${KEY_ENV}, else the OS keychain.",
+    )
+    scope = export_p.add_mutually_exclusive_group(required=True)
+    scope.add_argument(
+        "--month",
+        metavar="YYYY-MM",
+        help="Export this single month. --out is the projection file to write.",
+    )
+    scope.add_argument(
+        "--all-months",
+        action="store_true",
+        help="Export every month present, one file per month (proj-YYYY-MM.json). "
+        "--out is the directory to write them into.",
+    )
+    export_p.add_argument(
+        "--out",
+        required=True,
+        metavar="PATH",
+        help="Output projection file (--month) or output directory (--all-months).",
+    )
+    export_p.set_defaults(func=_cmd_export)
 
     payees_p = sub.add_parser(
         "payees",

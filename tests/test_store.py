@@ -88,3 +88,26 @@ def test_raw_transactions_roundtrip(tmp_path):
         rows = list(store.raw_transactions())
     assert len(rows) == 1
     assert rows[0]["raw_payee"] == "WHOLEFDS #1029 SEA"
+
+
+def test_raw_transaction_persists_institution(tmp_path):
+    # The account -> institution link `redactor export` reconstructs INST tokens
+    # from (issue #41). Omitting it is allowed and stays NULL.
+    db = tmp_path / "store.db"
+    with open_store(db, KEY, create=True) as store:
+        store.add_raw_transaction(
+            account_id="ACCT-XXXX",
+            posted_date="2026-06-01",
+            amount_cents=-4213,
+            raw_payee="WHOLEFDS #1029 SEA",
+            institution="Bank of Nowhere",
+        )
+        store.add_raw_transaction(
+            account_id="ACCT-XXXX",
+            posted_date="2026-06-02",
+            amount_cents=-100,
+            raw_payee="SBUX 8842 SEATTLE WA",
+        )
+        rows = list(store.raw_transactions())
+    assert rows[0]["institution"] == "Bank of Nowhere"
+    assert rows[1]["institution"] is None

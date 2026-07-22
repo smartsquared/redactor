@@ -187,6 +187,9 @@ def ingest_statement(
             raw_payee=txn.description,
             raw_memo=None,
             source_file=statement.source.name,
+            # Persist the account -> institution link so `redactor export` can
+            # reconstruct the INST token offline from the store (issue #41).
+            institution=statement.institution,
         )
         if registry is not None:
             payee_token = registry.record(txn.description)
