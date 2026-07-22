@@ -14,8 +14,6 @@ Nothing here touches real data — every crafted input is provably fake.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from redactor.fixtures import FIXTURES_DIR
@@ -151,11 +149,11 @@ def test_unmappable_headers_fail_value_free(tmp_path):
 
 
 def test_loads_fixture_ofx_1x():
-    inst, txns = load_statement_file(CREDIT_OFX).institution, load_statement_file(CREDIT_OFX).transactions
-    assert inst == "Placeholder National Bank"
-    assert len(txns) == 10
-    assert txns[0].description == "STARBUCKS #5561"
-    assert txns[0].amount == -5.75
+    stmt = load_statement_file(CREDIT_OFX)
+    assert stmt.institution == "Placeholder National Bank"
+    assert len(stmt.transactions) == 10
+    assert stmt.transactions[0].description == "STARBUCKS #5561"
+    assert stmt.transactions[0].amount == -5.75
 
 
 def test_ofx_account_id_read_from_file():
