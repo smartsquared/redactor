@@ -46,6 +46,31 @@ _MIN_PREFIX = 5
 # Character-similarity floor for the token-level fuzzy signal (typo tolerance).
 _MIN_CHAR_SIM = 0.86
 
+# --- Snowball guards (issue #37) ------------------------------------------- #
+# A shared token is only a *discriminative* lock if it is not generic. A token
+# is generic once it has been seen on many distinct memos: it is transaction
+# filler (``VISA``, ``POS``, ``DEBIT``, a big-city name) that carries no merchant
+# identity, so sharing it must never fuse two payees. Genericity needs both an
+# absolute floor (so a token seen only a handful of times is never demoted — the
+# clean fixtures never trip this) and a corpus fraction (so at real scale the
+# ubiquitous words drop out). Document frequency is learned online as memos
+# arrive, exactly as the issue's fix direction prescribes.
+_GENERIC_MIN_DOCS = 8
+_GENERIC_DF_FRACTION = 0.10
+
+# The most *discriminative* tokens an entity may accumulate before a further
+# shared-token match is treated as degraded rather than a clean 1.0 lock. A
+# healthy payee's identity is one or two brand tokens; an entity whose
+# discriminative token set has grown past this is a snowball-in-progress, so a
+# new variant joining it is flagged for review (never scores 1.0) instead of
+# being silently absorbed at full confidence.
+_ANCHOR_TOKEN_CAP = 8
+
+# Confidence assigned to a shared-token match into an over-grown entity: it still
+# clears the resolver threshold (the memo joins rather than splintering) but sits
+# below the review threshold, so the degraded grouping is surfaced to a human.
+_DEGRADED_LOCK = 0.90
+
 # The two-letter US state codes — geographic noise, never a payee signal.
 _US_STATES = frozenset(
     "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
@@ -156,6 +181,14 @@ class PayeeResolver:
         self._threshold = threshold
         self._entities: list[_Entity] = []
         self._next_id = 1
+        # Online document frequency: how many *distinct* memo variants each token
+        # has appeared on, plus the running total of distinct variants. Learned
+        # from :meth:`resolve` only (never :meth:`match`, which is non-mutating),
+        # so the outbound proxy cannot skew what counts as generic. This is what
+        # demotes ubiquitous filler (VISA/POS/DEBIT) out of the lock (issue #37).
+        self._doc_freq: dict[str, int] = {}
+        self._doc_count = 0
+        self._seen_docs: set[tuple[str, ...]] = set()
         # id -> display label, fixed at entity creation and kept even after a
         # merge folds the entity away, so a display never silently changes under
         # an already-issued alias. ``_claimed`` guards against two distinct
@@ -232,6 +265,22 @@ class PayeeResolver:
         """Resolve *memo* to a payee entity id, creating one if none matches."""
         return self.resolve_scored(memo)[0]
 
+    def observe(self, memo: str) -> None:
+        """Fold *memo* into the document-frequency counts without resolving it.
+
+        A pure pre-pass seam: it creates no entity and issues no id, it only
+        teaches the resolver how widely each token is spread across the corpus.
+        Running :meth:`observe` over a whole batch *before* resolving lets the
+        generic-token guard (issue #37) recognise ubiquitous filler like
+        ``VISA``/``POS`` from the very first :meth:`resolve` call, instead of
+        fusing a cold-start handful of merchants before document frequency has
+        warmed up. Idempotent per distinct memo, so seeding then resolving the
+        same batch double-counts nothing."""
+        tokens = normalize(memo)
+        if not tokens:
+            tokens = [re.sub(r"[^A-Z]", "", memo.upper()) or "UNKNOWN"]
+        self._observe(tokens)
+
     def resolve_scored(self, memo: str) -> tuple[int, float, bool]:
         """Resolve *memo*, also reporting how the decision was made.
 
@@ -260,6 +309,10 @@ class PayeeResolver:
             if (score := self._confidence(tokens, ent)) >= self._threshold
         ]
 
+        # Learn this memo's tokens *after* scoring it against prior evidence, so a
+        # memo never dilutes the genericity of its own tokens for its own decision.
+        self._observe(tokens)
+
         if not matches:
             ent = _Entity(id=self._next_id)
             self._next_id += 1
@@ -283,32 +336,73 @@ class PayeeResolver:
             self._entities.remove(other)
         return target.id, best_score, False
 
+    # -- document frequency (the generic-token guard) --------------------- #
+    def _observe(self, tokens: list[str]) -> None:
+        """Fold one memo's tokens into the online document-frequency counts.
+
+        Counted once per *distinct* normalized memo (re-resolving the same memo,
+        as happens on re-ingest, never inflates a token's frequency), so the
+        counts measure how widely a token is spread across the corpus — the
+        signal that separates a merchant's brand token from generic filler."""
+        key = tuple(tokens)
+        if key in self._seen_docs:
+            return
+        self._seen_docs.add(key)
+        self._doc_count += 1
+        for tok in set(tokens):
+            self._doc_freq[tok] = self._doc_freq.get(tok, 0) + 1
+
+    def _is_generic(self, token: str) -> bool:
+        """Has *token* recurred on enough distinct memos to be non-identifying?
+
+        Generic tokens (transaction filler, ubiquitous city names) carry no
+        merchant identity, so sharing one must never lock two payees together
+        (issue #37). Requires both an absolute floor and a corpus-fraction bar,
+        so a token seen only a handful of times — every token in the small clean
+        fixtures — is never demoted."""
+        df = self._doc_freq.get(token, 0)
+        return df >= _GENERIC_MIN_DOCS and df >= _GENERIC_DF_FRACTION * self._doc_count
+
+    def _discriminative(self, tokens: set[str]) -> set[str]:
+        """The subset of *tokens* that still carry merchant identity."""
+        return {t for t in tokens if not self._is_generic(t)}
+
     # -- scoring ---------------------------------------------------------- #
     def _confidence(self, tokens: list[str], ent: _Entity) -> float:
         """Confidence in ``tokens`` and ``ent`` being the same payee, in [0, 1]."""
         token_set = set(tokens)
 
-        # Deterministic: a shared discriminative token is a lock.
-        if token_set & ent.tokens:
+        # Deterministic: a shared *discriminative* token is a lock. Generic filler
+        # (``VISA``, ``POS``, a big-city name) is excluded on both sides, so it can
+        # never fuse two merchants — the fix for the snowball (issue #37). A lock
+        # into an entity whose discriminative identity has already grown large is
+        # a degraded merge: it still joins, but scores below the review threshold
+        # so a human is asked to confirm rather than it landing silently at 1.0.
+        shared = self._discriminative(token_set) & self._discriminative(ent.tokens)
+        if shared:
+            if len(self._discriminative(ent.tokens)) > _ANCHOR_TOKEN_CAP:
+                return _DEGRADED_LOCK
             return 1.0
 
         # Fuzzy: a significant token contains another as a long prefix
-        # (``WHOLE`` ⊂ ``WHOLEFDS``).
-        for a in token_set:
-            for b in ent.tokens:
+        # (``WHOLE`` ⊂ ``WHOLEFDS``). Generic filler is excluded here too.
+        my_disc = self._discriminative(token_set)
+        ent_disc = self._discriminative(ent.tokens)
+        for a in my_disc:
+            for b in ent_disc:
                 short, long = (a, b) if len(a) <= len(b) else (b, a)
                 if len(short) >= _MIN_PREFIX and long.startswith(short):
                     return 0.90
 
         # Fuzzy: acronym ↔ expansion (``WF`` ↔ ``WHOLE FOODS``), both directions.
-        my_acronyms = {t for t in token_set if 2 <= len(t) <= 5} if len(tokens) == 1 else set()
+        my_acronyms = {t for t in my_disc if 2 <= len(t) <= 5} if len(tokens) == 1 else set()
         my_initialism = {_acronym(tokens)} if len(tokens) >= 2 else set()
         if (my_acronyms & ent.initialisms()) or (my_initialism & ent.acronyms()):
             return 0.85
 
         # Fuzzy: near-identical tokens (spelling drift / typos).
         best = 0.0
-        for a in token_set:
-            for b in ent.tokens:
+        for a in my_disc:
+            for b in ent_disc:
                 best = max(best, SequenceMatcher(None, a, b).ratio())
         return best if best >= _MIN_CHAR_SIM else 0.0

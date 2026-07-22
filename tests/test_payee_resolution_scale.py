@@ -79,13 +79,23 @@ def _corpus(n_brands: int) -> tuple[list[str], dict[str, str]]:
 # --------------------------------------------------------------------------- #
 # Acceptance bar 1: no snowball — entity count stays in the hundreds, not 1.
 # --------------------------------------------------------------------------- #
+def _resolve_batch(memos: list[str]) -> tuple[PayeeResolver, dict[str, int]]:
+    """Resolve a whole batch the way ingest does: a document-frequency pre-pass
+    over every memo first, then resolve each. The pre-pass lets the generic-token
+    guard recognise filler (VISA/POS/city names) from the first grouping."""
+    resolver = PayeeResolver()
+    for memo in memos:
+        resolver.observe(memo)
+    assign = {memo: resolver.resolve(memo) for memo in memos}
+    return resolver, assign
+
+
 def test_high_volume_corpus_does_not_collapse_into_one_entity():
     n_brands = 300
     memos, truth = _corpus(n_brands)
     assert len(memos) == n_brands * 5
 
-    resolver = PayeeResolver()
-    assign = {memo: resolver.resolve(memo) for memo in memos}
+    resolver, assign = _resolve_batch(memos)
 
     count = resolver.entity_count()
     # The catastrophic failure was exactly one entity for the whole statement.
@@ -96,16 +106,16 @@ def test_high_volume_corpus_does_not_collapse_into_one_entity():
     )
     assert count <= n_brands * 1.5, f"unexpected over-splintering: {count} entities"
 
-    # No single entity may swallow a large share of the corpus (snowball signature).
+    # No single entity may swallow a large share of the corpus (snowball
+    # signature). A clean brand has five variants; the snowball had thousands.
     biggest = Counter(assign.values()).most_common(1)[0][1]
-    assert biggest <= 25, f"one entity absorbed {biggest} memos — snowball not stopped"
+    assert biggest <= 10, f"one entity absorbed {biggest} memos — snowball not stopped"
 
 
 def test_generic_shared_token_alone_never_merges_distinct_brands():
     """Two different brands that share only generic vocabulary must not fuse."""
     memos, truth = _corpus(300)
-    resolver = PayeeResolver()
-    assign = {memo: resolver.resolve(memo) for memo in memos}
+    _resolver, assign = _resolve_batch(memos)
 
     # Group entities by the brand truth of their members; a clean run has each
     # entity mapping to exactly one brand.

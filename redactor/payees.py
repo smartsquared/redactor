@@ -96,6 +96,16 @@ class PayeeRegistry:
 
     # -- ingest seam ---------------------------------------------------------
 
+    def observe(self, memo: str) -> None:
+        """Pre-seed the resolver's document frequency with *memo* (issue #37).
+
+        A batch caller runs this over every memo it is about to :meth:`record`
+        so the generic-token guard recognises ubiquitous filler (``VISA``,
+        ``POS``, a big-city name) from the first grouping decision, rather than
+        cold-start-fusing a handful of merchants before frequency warms up.
+        Creates no entity, issues no alias — a pure statistical pre-pass."""
+        self._resolver.observe(memo)
+
     def record(self, memo: str) -> str:
         """Resolve *memo* to its PAYEE alias, persisting the variant + confidence.
 
