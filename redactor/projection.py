@@ -42,6 +42,12 @@ class AliasRecord:
     amount: float       # signed; negative = money out, real (not aliased)
     ttype: str = ""     # DEBIT/CREDIT when known; non-identifying
     category: str = ""  # CSV category when present; non-identifying
+    payee_category: str = ""  # entity-level tag from the CLOSED vocabulary
+    #                           (redactor.categories); "" = untagged. Closed-set
+    #                           membership is lint-enforced, so this field can
+    #                           never carry a real merchant name. Additive with a
+    #                           default, so PROJECTION_VERSION stays 1
+    #                           (sanitized-context-api.md §2).
 
 
 @dataclass(frozen=True)

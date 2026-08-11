@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from redactor.alias import find_aliases
+from redactor.categories import UNTAGGED, is_valid_category
 from redactor.detect import finance_detector
 from redactor.fakeness import scan_text
 
@@ -52,7 +53,9 @@ class LintFinding:
 
     ``kind`` is the detector entity type (``ACCOUNT_ID``, ``ROUTING_NUMBER``,
     ...), a structural checksum kind (``aba_routing`` | ``luhn_card`` | ``ssn``),
-    or ``alias_nonconformance`` for an identifying field that is not a token.
+    ``alias_nonconformance`` for an identifying field that is not a token, or
+    ``category_nonconformance`` for a ``payee_category`` outside the closed
+    vocabulary.
     """
 
     kind: str
@@ -96,6 +99,11 @@ def _conformance_findings(records: list) -> list[LintFinding]:
     A raw merchant name, account id, or institution name left in an identifying
     slot is a leak even when it dodges every checksum and pattern — this is what
     catches "detected names" that the structural pillar alone would miss.
+
+    ``payee_category`` gets the mirror check: it must be untagged (``""``) or a
+    member of the closed vocabulary (:mod:`redactor.categories`). The closed set
+    is what makes the field safe to ship — an arbitrary string there could be a
+    real merchant name wearing a metadata hat.
     """
     findings: list[LintFinding] = []
     for i, record in enumerate(records):
@@ -113,6 +121,17 @@ def _conformance_findings(records: list) -> list[LintFinding]:
                         f"records[{i}].{field} is not a canonical alias token",
                     )
                 )
+        category = record.get("payee_category", UNTAGGED)
+        if category != UNTAGGED and (
+            not isinstance(category, str) or not is_valid_category(category)
+        ):
+            findings.append(
+                LintFinding(
+                    "category_nonconformance",
+                    str(category),
+                    f"records[{i}].payee_category is not in the closed vocabulary",
+                )
+            )
     return findings
 
 

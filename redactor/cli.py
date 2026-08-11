@@ -537,6 +537,12 @@ def _cmd_payees(args: argparse.Namespace) -> int:
             return _payees_split(registry, args.split)
         if args.rename is not None:
             return _payees_rename(registry, args.rename)
+        if args.tag is not None:
+            return _payees_tag(registry, args.tag)
+        if args.untag is not None:
+            return _payees_untag(registry, args.untag)
+        if args.categorize:
+            return _payees_categorize(registry)
         return _payees_review(registry)
     finally:
         store.close()
@@ -551,11 +557,12 @@ def _payees_review(registry: PayeeRegistry) -> int:
     print(f"redactor payees: {len(entities)} payee entit(y/ies):")
     for e in entities:
         flag = "  [REVIEW]" if e.low_confidence else ""
+        tag = f"  [{e.category}]" if e.category else ""
         # The display label is a real value: this line is for the local terminal
         # on the machine holding the mapping table only.
         print(
             f"  {e.token}  variants={e.variant_count}  "
-            f"confidence={e.confidence:.2f}{flag}  {e.display}"
+            f"confidence={e.confidence:.2f}{flag}{tag}  {e.display}"
         )
     return 0
 
@@ -591,6 +598,49 @@ def _payees_rename(registry: PayeeRegistry, spec: list[str]) -> int:
         return 1
     # Alias-space: name the token, not the new label (which is a real value).
     print(f"redactor payees: renamed {token}.")
+    return 0
+
+
+def _payees_tag(registry: PayeeRegistry, spec: list[str]) -> int:
+    token, category = spec
+    try:
+        registry.tag(token, category)
+    except ValueError as exc:
+        # The refusal echoes only the token/category and the closed vocabulary —
+        # value-free, safe on stderr.
+        print(f"redactor payees: cannot tag: {exc}", file=sys.stderr)
+        return 1
+    # Alias-space confirmation: a token and a closed-vocabulary member.
+    print(f"redactor payees: tagged {token} as {category}.")
+    return 0
+
+
+def _payees_untag(registry: PayeeRegistry, token: str) -> int:
+    try:
+        registry.untag(token)
+    except ValueError as exc:
+        print(f"redactor payees: cannot untag: {exc}", file=sys.stderr)
+        return 1
+    print(f"redactor payees: untagged {token}.")
+    return 0
+
+
+def _payees_categorize(registry: PayeeRegistry) -> int:
+    """Propose categories for untagged entities — a local render (labels).
+
+    Nothing is written: the human confirms each proposal with ``--tag``. Like
+    ``--review``, the display labels on these lines are real values for the
+    local terminal only."""
+    proposals = registry.propose_categories()
+    if not proposals:
+        print("redactor payees: no category proposals (all matched entities are tagged).")
+        return 0
+    print(
+        f"redactor payees: {len(proposals)} category proposal(s) — confirm each "
+        f"with `redactor payees --tag TOKEN CATEGORY`:"
+    )
+    for p in proposals:
+        print(f"  {p.token}  ->  {p.category}  ({p.display})")
     return 0
 
 
@@ -796,8 +846,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     payees_p = sub.add_parser(
         "payees",
-        help="Review and fix payee entity groupings (merge / split / rename); "
-        "runs only where the mapping table lives.",
+        help="Review, fix, and categorize payee entities (merge / split / "
+        "rename / tag); runs only where the mapping table lives.",
         description=(
             "Entity-resolution review flow (story S1.1). --review lists the "
             "resolved payee entities with variant counts, confidence, and "
@@ -805,7 +855,10 @@ def build_parser() -> argparse.ArgumentParser:
             "values). --merge/--split/--rename fix groupings and labels while "
             "preserving alias stability (a merge aliases the loser to the "
             "winner and never renumbers); every mutation is journaled. Mutation "
-            "output is alias-space only."
+            "output is alias-space only. --categorize/--tag/--untag manage "
+            "entity-level closed-vocabulary category tags (the eligibility "
+            "verdict that rides into projections as payee_category — see "
+            "docs/payee-categories.md)."
         ),
     )
     payees_p.add_argument(
@@ -843,6 +896,26 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=2,
         metavar=("TOKEN", "LABEL"),
         help="Change TOKEN's display label to LABEL (real value; stays local).",
+    )
+    action.add_argument(
+        "--tag",
+        nargs=2,
+        metavar=("TOKEN", "CATEGORY"),
+        help="Bind a closed-vocabulary category (pharmacy, medical-provider, "
+        "dental, vision, mixed-retailer, non-medical) to TOKEN's entity. The tag "
+        "rides into projections as payee_category.",
+    )
+    action.add_argument(
+        "--untag",
+        metavar="TOKEN",
+        help="Remove TOKEN's category tag (back to untagged).",
+    )
+    action.add_argument(
+        "--categorize",
+        action="store_true",
+        help="Propose categories for untagged entities from local keyword rules. "
+        "Reveals display labels; local render only. Writes nothing — confirm "
+        "each proposal with --tag.",
     )
     payees_p.set_defaults(func=_cmd_payees)
     return parser

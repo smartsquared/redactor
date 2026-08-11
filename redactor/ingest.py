@@ -200,6 +200,10 @@ def ingest_statement(
             payee_token = registry.record(txn.description)
         else:
             payee_token = _issue_alias(store, "PAYEE", resolve_payee(txn.description))
+        # An earlier-tagged payee carries its closed-vocabulary tag into this
+        # projection too (tags live on the canonical head; a first ingest has
+        # none, so this is "" until the human runs the categorize flow).
+        head = store.mapping.canonical_head(payee_token) or payee_token
         records.append(
             AliasRecord(
                 account=account_token,
@@ -209,6 +213,7 @@ def ingest_statement(
                 amount=txn.amount,
                 ttype=txn.ttype,
                 category=txn.category,
+                payee_category=store.payee_category(head) or "",
             )
         )
     if lint:
