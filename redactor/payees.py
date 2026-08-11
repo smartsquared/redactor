@@ -17,6 +17,12 @@ review verbs the human runs on the machine that holds the table:
     :meth:`rename` — fix wrong groupings and labels. A merge aliases the loser to
     the winner and **never renumbers** (alias stability, docs/alias-contract.md
     §2.3–2.4); every mutation is journaled in the store (auditable).
+  * :meth:`PayeeRegistry.tag` / :meth:`untag` / :meth:`propose_categories` —
+    entity-level category tags from the closed vocabulary
+    (:mod:`redactor.categories`, docs/payee-categories.md). The tag is the local
+    eligibility verdict that rides into projections as ``payee_category``;
+    proposing reads real display labels, so it is a local render surface like
+    :meth:`review`.
 
 Nothing here serializes the mapping table off-store: it reads and writes only
 through the encrypted ``store`` connection. Display labels and memo variants are
@@ -28,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from redactor.alias import find_aliases
+from redactor.categories import UNTAGGED, propose, validate_category
 from redactor.resolve import PayeeResolver, display_label
 
 # A grouping whose confidence is below this is *flagged for review*: it was
@@ -64,6 +71,21 @@ class PayeeEntity:
     variant_count: int    # distinct memo strings grouped under it
     confidence: float     # the weakest grouping confidence among its variants
     low_confidence: bool  # True => below REVIEW_THRESHOLD, flagged for review
+    category: str = UNTAGGED  # closed-vocabulary tag, or "" when untagged
+
+
+@dataclass(frozen=True)
+class CategoryProposal:
+    """One proposer suggestion for an untagged entity (local render).
+
+    ``display`` is a revealed real value — like :class:`PayeeEntity`, this is
+    for the human's terminal on the machine holding the mapping table. The
+    ``category`` is a closed-vocabulary member; nothing is written until the
+    human confirms with :meth:`PayeeRegistry.tag`."""
+
+    token: str
+    display: str
+    category: str
 
 
 class PayeeRegistry:
@@ -176,10 +198,59 @@ class PayeeRegistry:
                     variant_count=counts.get(token, 0),
                     confidence=confidence,
                     low_confidence=confidence < self._review_threshold,
+                    category=self._store.payee_category(token) or UNTAGGED,
                 )
             )
         entities.sort(key=lambda e: _token_n(e.token))
         return entities
+
+    # -- category tags (docs/payee-categories.md) -----------------------------
+
+    def tag(self, token: str, category: str) -> None:
+        """Bind a closed-vocabulary *category* to the entity *token* names.
+
+        The tag lands on the canonical head, so tagging a merged-away loser
+        tags the entity it folds into — and every alias resolving there
+        inherits it. Free text is refused (``ValueError``): the closed
+        vocabulary is what keeps ``payee_category`` unable to carry a real
+        value off-machine. Journaled like every payee mutation (the journal
+        stays alias-space: a token and a vocabulary member)."""
+        self._require_payee(token)
+        validate_category(category)
+        head = self._store.mapping.canonical_head(token) or token
+        self._store.set_payee_category(head, category)
+        self._store.add_payee_journal("tag", winner=head, note=category)
+
+    def untag(self, token: str) -> None:
+        """Remove the entity's category tag (back to untagged). Idempotent."""
+        self._require_payee(token)
+        head = self._store.mapping.canonical_head(token) or token
+        self._store.clear_payee_category(head)
+        self._store.add_payee_journal("untag", winner=head)
+
+    def category_of(self, token: str) -> str:
+        """The entity's tag (following merges to the head), or ``""`` untagged."""
+        head = self._store.mapping.canonical_head(token) or token
+        return self._store.payee_category(head) or UNTAGGED
+
+    def propose_categories(self) -> list[CategoryProposal]:
+        """Run the local rule proposer over every *untagged* entity.
+
+        A local render surface (reveals display labels), like :meth:`review`.
+        Returns only entities the rules have an opinion on; writing a tag stays
+        an explicit human step (:meth:`tag`)."""
+        proposals: list[CategoryProposal] = []
+        for entity in self.review():
+            if entity.category:
+                continue
+            proposed = propose(entity.display)
+            if proposed is not None:
+                proposals.append(
+                    CategoryProposal(
+                        token=entity.token, display=entity.display, category=proposed
+                    )
+                )
+        return proposals
 
     # -- mutations (all journaled) -------------------------------------------
 

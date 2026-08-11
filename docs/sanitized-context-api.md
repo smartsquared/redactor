@@ -99,7 +99,11 @@ Returns a **`ContextWindow`**:
 
 `AliasRecord` (from the projection): `account` (`ACCT-n`), `institution`
 (`INST-n`), `payee` (`PAYEE-n`), `date` (real ISO), `amount` (real, signed —
-negative = money out), `ttype`, `category`.
+negative = money out), `ttype`, `category`, `payee_category` (entity-level tag
+from the **closed** vocabulary in
+[payee-categories.md](payee-categories.md); `""` = untagged; lint-enforced so
+it can never carry a real name — additive with a default, so the version stays
+`1` per §2).
 
 `AccountBalance`: `account` (`ACCT-n`), `institution` (`INST-n`), `net` (signed
 sum of amounts), `debits` (sum of money-out), `credits` (sum of money-in),

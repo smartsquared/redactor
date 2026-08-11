@@ -38,7 +38,7 @@ except ImportError as exc:  # pragma: no cover
 
 # Bump when a migration is added; keep _MIGRATIONS in step (index i migrates
 # user_version i -> i+1).
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 PathLike = str | os.PathLike
 
@@ -425,6 +425,47 @@ class Store:
         )
         self._conn.commit()
 
+    # -- payee categories (alias-space metadata) ------------------------------
+    #
+    # One closed-vocabulary tag per canonical PAYEE token (docs/
+    # payee-categories.md). Alias-space by construction — a token and a
+    # vocabulary member, never a real value — but it lives here with the rest of
+    # the payee state so tagging and grouping stay in one transaction domain.
+    # Vocabulary validation is the registry's job (redactor.categories); the
+    # store persists what it is given.
+
+    def set_payee_category(self, alias_token: str, category: str) -> None:
+        """Bind *category* to a PAYEE token, replacing any earlier tag."""
+        self._conn.execute(
+            "INSERT INTO payee_category (alias_token, category, recorded_at) "
+            "VALUES (?, ?, ?) ON CONFLICT(alias_token) DO UPDATE SET "
+            "category = excluded.category, recorded_at = excluded.recorded_at",
+            (alias_token, category, _utcnow_iso()),
+        )
+        self._conn.commit()
+
+    def clear_payee_category(self, alias_token: str) -> None:
+        """Remove a PAYEE token's tag. Idempotent — clearing an untagged token
+        is a no-op."""
+        self._conn.execute(
+            "DELETE FROM payee_category WHERE alias_token = ?", (alias_token,)
+        )
+        self._conn.commit()
+
+    def payee_category(self, alias_token: str) -> str | None:
+        """The category tagged onto a PAYEE token, or ``None`` when untagged."""
+        row = self._conn.execute(
+            "SELECT category FROM payee_category WHERE alias_token = ?",
+            (alias_token,),
+        ).fetchone()
+        return None if row is None else row[0]
+
+    def payee_categories(self) -> dict[str, str]:
+        """Every ``token -> category`` binding currently recorded."""
+        return dict(
+            self._conn.execute("SELECT alias_token, category FROM payee_category")
+        )
+
     def add_payee_journal(
         self, op: str, *, winner: str | None = None, loser: str | None = None,
         note: str | None = None,
@@ -567,7 +608,25 @@ def _migrate_3_to_4(conn) -> None:
     )
 
 
-_MIGRATIONS = [_migrate_0_to_1, _migrate_1_to_2, _migrate_2_to_3, _migrate_3_to_4]
+def _migrate_4_to_5(conn) -> None:
+    # Entity-level payee category tags (docs/payee-categories.md). One
+    # closed-vocabulary tag per canonical PAYEE token — the local eligibility
+    # verdict that rides into projections as `payee_category`. Alias-space only
+    # (token + vocabulary member); the crown jewel gains nothing new.
+    conn.executescript(
+        """
+        CREATE TABLE payee_category (
+            alias_token TEXT PRIMARY KEY,
+            category    TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        );
+        """
+    )
+
+
+_MIGRATIONS = [
+    _migrate_0_to_1, _migrate_1_to_2, _migrate_2_to_3, _migrate_3_to_4, _migrate_4_to_5,
+]
 
 
 # -- open ---------------------------------------------------------------------

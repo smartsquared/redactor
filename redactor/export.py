@@ -122,16 +122,21 @@ def _record_from_row(store, row: dict) -> AliasRecord:
     Identifying fields become their canonical tokens (account, institution,
     payee); amount and date stay real. ``ttype``/``category`` are not persisted on
     the raw row, so they default empty — non-identifying, so the projection stays
-    lint-clean and off-machine-safe regardless."""
+    lint-clean and off-machine-safe regardless. ``payee_category`` is the
+    entity-level closed-vocabulary tag the human bound to the payee (docs/
+    payee-categories.md); ``_payee_token`` already resolved to the canonical
+    head, which is where tags live."""
+    payee = _payee_token(store, row["raw_payee"])
     return AliasRecord(
         account=_alias_or_raw(store, "ACCT", row["account_id"]) or "",
         # None, not "": a source with no institution column (bare CSV exports)
         # has nothing to alias, and lint treats None as unknown but "" as a
         # non-conforming identifying value.
         institution=_alias_or_raw(store, "INST", row.get("institution")) or None,
-        payee=_payee_token(store, row["raw_payee"]),
+        payee=payee,
         date=row["posted_date"],
         amount=row["amount_cents"] / 100,
+        payee_category=store.payee_category(payee) or "",
     )
 
 
