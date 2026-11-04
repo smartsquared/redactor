@@ -23,6 +23,9 @@ Subcommands:
     when the lint is green** — the artifact ``sakuma-finance import --projection``
     consumes. A red projection writes nothing and exits non-zero; the summary
     (month, row count, verdict) is alias-space only.
+  * ``fetch`` — download a statement by replaying recorded clicks in a visible
+    Chrome window after the human logs in (:mod:`redactor.fetch`). No model is
+    involved, and output is limited to step numbers and file metadata.
 
 Key custody, in priority order, is shared across subcommands (:func:`_resolve_key`):
 ``--key`` > ``$REDACTOR_KEY`` > the OS keychain. The first two are CI/test
@@ -594,6 +597,13 @@ def _payees_rename(registry: PayeeRegistry, spec: list[str]) -> int:
     return 0
 
 
+def _cmd_fetch(args: argparse.Namespace) -> int:
+    # Imported here so every other subcommand works without the browser tooling.
+    from redactor.fetch import command
+
+    return command(args)
+
+
 def _basename(path: str) -> str:
     return os.path.basename(str(path))
 
@@ -845,6 +855,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Change TOKEN's display label to LABEL (real value; stays local).",
     )
     payees_p.set_defaults(func=_cmd_payees)
+
+    fetch_p = sub.add_parser(
+        "fetch",
+        help="Download a statement by replaying recorded clicks after you log in.",
+        description=(
+            "Open a visible Chrome window, wait for you to log in, and record or replay "
+            "the clicks that reach a statement export. Typed text is never recorded. "
+            "Files go to ~/.redactor/downloads, not the ingest inbox."
+        ),
+    )
+    fetch_p.add_argument(
+        "--root",
+        default=None,
+        metavar="PATH",
+        help="Local data directory (default: ~/.redactor).",
+    )
+    fetch_sub = fetch_p.add_subparsers(dest="fetch_command", required=True)
+    fetch_record = fetch_sub.add_parser("record", help="Record the clicks once.")
+    fetch_record.add_argument("--site", required=True, help="Short name, like 'bank'.")
+    fetch_record.add_argument("--url", required=True, help="The site's login address.")
+    fetch_run = fetch_sub.add_parser("run", help="Replay a recording and save the file.")
+    fetch_run.add_argument("--site", required=True, help="Short name, like 'bank'.")
+    fetch_sub.add_parser("status", help="List recordings and downloads (metadata only).")
+    fetch_p.set_defaults(func=_cmd_fetch)
     return parser
 
 
